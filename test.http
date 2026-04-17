@@ -1,0 +1,34 @@
+@baseUrlLocal = http://localhost:8787
+@baseUrlRemote = https://backend.amroaltayeb14.workers.dev
+
+### =========================================
+### Health Check (API Status)
+### =========================================
+
+# Local Health Check
+GET {{baseUrlLocal}}/
+
+###
+
+# Remote Health Check
+GET {{baseUrlRemote}}/
+
+### =========================================
+### Better Auth Endpoints
+### =========================================
+
+# Local: Check Session (Should return null/401 unauthenticated)
+GET {{baseUrlLocal}}/api/auth/get-session
+Accept: application/json
+
+###
+
+# Remote: Check Session (Should return null/401 unauthenticated)
+GET {{baseUrlRemote}}/api/auth/get-session
+Accept: application/json
+
+###
+
+# Note: Social login endpoints like /api/auth/sign-in/social 
+# are typically intended to be initiated via browser redirects natively
+# rather than through REST clients.

@@ -4,6 +4,8 @@ import { cors } from 'hono/cors';
 
 const app = new Hono<{ Bindings: { rahma_db: D1Database } }>();
 
+app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA API is running' }));
+
 app.use('/api/*', cors({
   origin: ['https://client.amroaltayeb14.workers.dev', 'http://localhost:3000'],
   allowHeaders: ['Content-Type', 'Authorization', 'Accept'],
@@ -14,7 +16,7 @@ app.use('/api/*', cors({
 }));
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => {
-    const auth = initAuth(c.env.rahma_db);
+    const auth = initAuth(c.env);
     return auth.handler(c.req.raw);
 });
 
