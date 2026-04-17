@@ -92,7 +92,7 @@ const studentSchema = z.object({
 });
 
 const financeLogSchema = z.object({
-  type: z.enum(['income', 'expense'], { invalid_type_error: "نوع المعاملة غير صالح" }),
+  type: z.enum(['income', 'expense'], { error: "نوع المعاملة غير صالح" }),
   amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً"),
   category: z.string().min(2, "الفئة مطلوبة"),
   description: z.string().optional(),
