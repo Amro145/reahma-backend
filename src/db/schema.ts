@@ -21,6 +21,31 @@ export const session = sqliteTable("session", {
     userId: text("userId").notNull().references(() => user.id),
 });
 
+export const account = sqliteTable("account", {
+    id: text("id").primaryKey(),
+    accountId: text("accountId").notNull(),
+    providerId: text("providerId").notNull(),
+    userId: text("userId").notNull().references(() => user.id),
+    accessToken: text("accessToken"),
+    refreshToken: text("refreshToken"),
+    idToken: text("idToken"),
+    accessTokenExpiresAt: integer("accessTokenExpiresAt", { mode: "timestamp" }),
+    refreshTokenExpiresAt: integer("refreshTokenExpiresAt", { mode: "timestamp" }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull()
+});
+
+export const verification = sqliteTable("verification", {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }),
+    updatedAt: integer("updatedAt", { mode: "timestamp" })
+});
+
 // --- جداول النظام المالي ---
 
 // 1. جدول المساهمين
