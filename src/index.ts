@@ -4,7 +4,7 @@ import { cors } from 'hono/cors';
 import { createMiddleware } from 'hono/factory';
 import { getDb } from './db/index';
 import { students, financeLogs } from './db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 
 type Bindings = {
   rahma_db: D1Database;
@@ -173,6 +173,14 @@ app.post('/api/finance/logs', requireAuth, async (c) => {
     }).returning();
 
     return c.json({ message: "Finance log added", log: newLog[0] });
+});
+
+app.get('/api/finance/logs', requireAuth, async (c) => {
+    const user = c.get('user');
+    const db = getDb(c.env.rahma_db);
+
+    const logs = await db.select().from(financeLogs).where(eq(financeLogs.userId, user.id)).orderBy(desc(financeLogs.createdAt));
+    return c.json({ logs });
 });
 
 export default app;
