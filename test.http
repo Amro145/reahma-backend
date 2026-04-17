@@ -1,34 +1,64 @@
-@baseUrlLocal = http://localhost:8787
-@baseUrlRemote = https://backend.amroaltayeb14.workers.dev
+### RAHMA Backend API Tests ###
 
-### =========================================
-### Health Check (API Status)
-### =========================================
+@baseUrl = https://backend.amroaltayeb14.workers.dev
+@localUrl = http://localhost:8787
 
-# Local Health Check
-GET {{baseUrlLocal}}/
-
-###
-
-# Remote Health Check
-GET {{baseUrlRemote}}/
-
-### =========================================
-### Better Auth Endpoints
-### =========================================
-
-# Local: Check Session (Should return null/401 unauthenticated)
-GET {{baseUrlLocal}}/api/auth/get-session
+# 1. Health Check
+GET {{baseUrl}}/
 Accept: application/json
 
 ###
 
-# Remote: Check Session (Should return null/401 unauthenticated)
-GET {{baseUrlRemote}}/api/auth/get-session
+# 2. Add New Student (Requires Auth Cookies / Session)
+POST {{baseUrl}}/api/students
+Content-Type: application/json
+
+{
+    "name": "أحمد خليل",
+    "whatsapp": "+249123456789",
+    "requiredAmount": 50000
+}
+
+###
+
+# 3. Get All Students
+GET {{baseUrl}}/api/students
 Accept: application/json
 
 ###
 
-# Note: Social login endpoints like /api/auth/sign-in/social 
-# are typically intended to be initiated via browser redirects natively
-# rather than through REST clients.
+# 4. Mark Student as Paid (Replace 1 with student id)
+PATCH {{baseUrl}}/api/students/1/pay
+Content-Type: application/json
+
+###
+
+# 5. Add a Finance Log (Income)
+POST {{baseUrl}}/api/finance/logs
+Content-Type: application/json
+
+{
+    "type": "income",
+    "amount": 20000,
+    "category": "تبرع عام",
+    "description": "تبرع من فاعل خير"
+}
+
+###
+
+# 6. Add a Finance Log (Expense)
+POST {{baseUrl}}/api/finance/logs
+Content-Type: application/json
+
+{
+    "type": "expense",
+    "amount": 5000,
+    "category": "إيجار",
+    "description": "إيجار شهر سبتمبر"
+}
+
+###
+
+# 7. Get Finance Summary
+GET {{baseUrl}}/api/finance/summary
+Accept: application/json

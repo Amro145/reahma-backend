@@ -46,24 +46,26 @@ export const verification = sqliteTable("verification", {
     updatedAt: integer("updatedAt", { mode: "timestamp" })
 });
 
-// --- جداول النظام المالي ---
 
-// 1. جدول المساهمين
-export const shareholders = sqliteTable("shareholders", {
+
+// --- جداول إدارة النظام ---
+
+export const students = sqliteTable("students", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").notNull().references(() => user.id), // صاحب الحساب
+    userId: text("userId").notNull().references(() => user.id), // Owner (Admin)
     name: text("name").notNull(),
-    academicYear: text("academic_year").notNull(),
     whatsapp: text("whatsapp"),
-    totalContribution: real("total_contribution").default(0),
+    requiredAmount: real("requiredAmount").notNull(),
+    status: text("status", { enum: ["paid", "pending"] }).default("pending").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
 
-// 2. جدول العمليات (المدخلات والمنصرفات)
-export const transactions = sqliteTable("transactions", {
+export const financeLogs = sqliteTable("financeLogs", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").notNull().references(() => user.id),
-    type: text("type").notNull(), // 'income' | 'expense'
+    userId: text("userId").notNull().references(() => user.id), // Owner (Admin)
+    type: text("type", { enum: ["income", "expense"] }).notNull(),
     amount: real("amount").notNull(),
+    category: text("category").notNull(),
     description: text("description"),
-    date: integer("date", { mode: "timestamp" }).notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
