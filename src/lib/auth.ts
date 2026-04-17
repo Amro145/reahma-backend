@@ -6,6 +6,7 @@ export const initAuth = (d1: D1Database) => betterAuth({
     database: drizzleAdapter(getDb(d1), {
         provider: "sqlite",
     }),
+    trustedOrigins: ["https://client.amroaltayeb14.workers.dev", "http://localhost:3000"],
     socialProviders: {
         google: {
             clientId: process.env.GOOGLE_CLIENT_ID!,
