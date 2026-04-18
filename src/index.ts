@@ -324,7 +324,7 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
       type: 'income',
       amount,
       category: 'رسوم دراسية',
-      description: `رسوم شهر ${monthIndex} للطالب ${student.name}`,
+      description: `اشتراك شهر ${monthIndex} للطالب ${student.name}`,
       createdAt: new Date(),
     });
 
