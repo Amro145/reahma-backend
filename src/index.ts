@@ -5,11 +5,12 @@ import { secureHeaders } from 'hono/secure-headers';
 import { createMiddleware } from 'hono/factory';
 import { getDb } from './db/index';
 import { students, financeLogs, studentSubscriptions } from './db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 type Bindings = {
   rahma_db: D1Database;
+  RATE_LIMITER: KVNamespace;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL: string;
   GOOGLE_CLIENT_ID: string;
@@ -58,49 +59,48 @@ app.use('/api/*', (c, next) => {
   })(c, next);
 });
 
-// 3. Simple In-Memory Rate Limiter (Per IP)
-// Note: In Cloudflare Workers, this is per-isolate. For global, use Cloudflare KV.
-const rateLimiter = (limit: number, windowSeconds: number) => {
-  const cache = new Map<string, { count: number; resetAt: number }>();
-  return createMiddleware(async (c, next) => {
+// 3. Cloudflare KV Rate Limiter
+const rateLimiterKV = (limit: number, windowSeconds: number) => {
+  return createMiddleware<{ Bindings: Bindings }>(async (c, next) => {
     const ip = c.req.header('cf-connecting-ip') || 'unknown';
-    const now = Date.now();
-    const key = `${ip}`; // Limit per IP globally for simplicity and better security
-    
-    let info = cache.get(key);
-    if (!info || now > info.resetAt) {
-      info = { count: 0, resetAt: now + (windowSeconds * 1000) };
+    // Keying by IP and path to allow isolation
+    const pathPrefix = c.req.path.startsWith('/api/auth') ? 'auth' : 'api';
+    const key = `rl:${ip}:${pathPrefix}`;
+    const kv = c.env.RATE_LIMITER;
+
+    if (!kv) {
+      console.warn("KV RATE_LIMITER binding is missing. Skipping rate limit.");
+      return await next();
     }
-    
-    info.count++;
-    cache.set(key, info);
-    
-    if (info.count > limit) {
-      return c.json({ 
-        error: "Too many requests", 
-        retryAfter: Math.ceil((info.resetAt - now) / 1000) 
-      }, 429);
+
+    const current = await kv.get(key);
+    const count = current ? parseInt(current) : 0;
+
+    if (count >= limit) {
+      return c.json({ error: "Too many requests. Please try again later." }, 429);
     }
+
+    await kv.put(key, (count + 1).toString(), { expirationTtl: Math.max(windowSeconds, 60) });
     await next();
   });
 };
 
-app.use('/api/auth/*', rateLimiter(10, 60)); // 10 req/min for Auth
-app.use('/api/*', rateLimiter(60, 60));      // 60 req/min for General
+app.use('/api/auth/*', rateLimiterKV(10, 60)); // 10 req/min for Auth
+app.use('/api/*', rateLimiterKV(60, 60));      // 60 req/min for General
 
-// --- Input Validation Schemas --- //
+// --- Input Validation Schemas Hardening --- //
 
 const studentSchema = z.object({
-  name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين"),
-  whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح"),
-  requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً"),
+  name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").max(100, "الاسم طويل جداً"),
+  whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").max(20, "رقم الواتساب طويل جداً"),
+  requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(10000000, "المبلغ غير منطقي"),
 });
 
 const financeLogSchema = z.object({
   type: z.enum(['income', 'expense'], { error: "نوع المعاملة غير صالح" }),
-  amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً"),
-  category: z.string().min(2, "الفئة مطلوبة"),
-  description: z.string().optional(),
+  amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(50000000, "المبلغ غير منطقي"),
+  category: z.string().min(2, "الفئة مطلوبة").max(100, "الفئة طويلة جداً"),
+  description: z.string().max(512, "الوصف طويل جداً").optional(),
 });
 
 const studentIdParam = z.string().regex(/^\d+$/, "معرف الطالب غير صالح").transform(Number);
@@ -191,9 +191,9 @@ app.patch('/api/students/:id', requireAuth, async (c) => {
   const body = await c.req.json();
   // Optional fields for update
   const updateSchema = z.object({
-    name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").optional(),
-    whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").optional(),
-    requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").optional(),
+    name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").max(100, "الاسم طويل جداً").optional(),
+    whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").max(20, "رقم الواتساب طويل جداً").optional(),
+    requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(10000000, "المبلغ غير منطقي").optional(),
   });
 
   const validation = updateSchema.safeParse(body);
@@ -299,7 +299,7 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
   const bodySchema = z.object({
     monthIndex: z.number().min(1).max(12),
     academicYear: z.number(),
-    amount: z.number().positive()
+    amount: z.number().positive().max(10000000, "المبلغ غير منطقي")
   });
 
   const body = await c.req.json();
@@ -340,27 +340,35 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
 app.get('/api/finance/summary', requireAuth, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
+  const userId = user.id;
 
-  const allStudents = await db.select().from(students).where(eq(students.userId, user.id));
-  let totalRequired = 0;
-  let totalCollected = 0;
-  for (const student of allStudents) {
-    totalRequired += student.requiredAmount;
-    if (student.status === 'paid') totalCollected += student.requiredAmount;
-  }
+  // Aggregate student stats directly in D1
+  const studentStatsResult = await db.select({
+    totalRequired: sql<number>`COALESCE(SUM(${students.requiredAmount}), 0)`,
+    totalCollected: sql<number>`COALESCE(SUM(CASE WHEN ${students.status} = 'paid' THEN ${students.requiredAmount} ELSE 0 END), 0)`
+  }).from(students).where(eq(students.userId, userId));
 
-  const logs = await db.select().from(financeLogs).where(eq(financeLogs.userId, user.id));
-  let totalExpenses = 0;
-  let totalIncome = 0;
-  for (const log of logs) {
-    if (log.type === 'expense') totalExpenses += log.amount;
-    else if (log.type === 'income') totalIncome += log.amount;
-  }
+  // Aggregate financeLogs stats directly in D1
+  const financeStatsResult = await db.select({
+    totalIncome: sql<number>`COALESCE(SUM(CASE WHEN ${financeLogs.type} = 'income' THEN ${financeLogs.amount} ELSE 0 END), 0)`,
+    totalExpenses: sql<number>`COALESCE(SUM(CASE WHEN ${financeLogs.type} = 'expense' THEN ${financeLogs.amount} ELSE 0 END), 0)`
+  }).from(financeLogs).where(eq(financeLogs.userId, userId));
+
+  const s = studentStatsResult[0] || { totalRequired: 0, totalCollected: 0 };
+  const f = financeStatsResult[0] || { totalIncome: 0, totalExpenses: 0 };
 
   return c.json({
     summary: {
-      students: { totalRequired, totalCollected, pending: totalRequired - totalCollected },
-      finances: { totalIncome, totalExpenses, netBalance: (totalCollected + totalIncome) - totalExpenses }
+      students: { 
+        totalRequired: s.totalRequired, 
+        totalCollected: s.totalCollected, 
+        pending: s.totalRequired - s.totalCollected 
+      },
+      finances: { 
+        totalIncome: f.totalIncome, 
+        totalExpenses: f.totalExpenses, 
+        netBalance: (s.totalCollected + f.totalIncome) - f.totalExpenses 
+      }
     }
   });
 });
@@ -406,9 +414,9 @@ app.patch('/api/finance/logs/:id', requireAuth, async (c) => {
   const body = await c.req.json();
   const updateSchema = z.object({
     type: z.enum(['income', 'expense'], { error: "نوع المعاملة غير صالح" }).optional(),
-    amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").optional(),
-    category: z.string().min(2, "الفئة مطلوبة").optional(),
-    description: z.string().optional(),
+    amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(50000000, "المبلغ غير منطقي").optional(),
+    category: z.string().min(2, "الفئة مطلوبة").max(100, "الفئة طويلة جداً").optional(),
+    description: z.string().max(512, "الوصف طويل جداً").optional(),
   });
 
   const validation = updateSchema.safeParse(body);

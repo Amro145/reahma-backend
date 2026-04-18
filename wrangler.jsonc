@@ -9,12 +9,12 @@
 	// "vars": {
 	//   "MY_VAR": "my-variable"
 	// },
-	// "kv_namespaces": [
-	//   {
-	//     "binding": "MY_KV_NAMESPACE",
-	//     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-	//   }
-	// ],
+	"kv_namespaces": [
+		{
+			"binding": "RATE_LIMITER",
+			"id": "0c3d2c843ea14bdbb4a429d332dfff62"
+		}
+	],
 	// "r2_buckets": [
 	//   {
 	//     "binding": "MY_BUCKET",
