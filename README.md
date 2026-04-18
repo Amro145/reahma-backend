@@ -1,21 +1,69 @@
-```txt
+# منصة رحمة - الخادم (Backend)
+
+هذا هو المستودع الخاص بالخادم (Backend) لمنصة **رحمة** لإدارة العمل الخيري. تم بناء هذا الخادم ليكون خفيفاً وسريعاً جداً ومصمماً للعمل على بيئات الحوسبة الطرفية (Edge Computing) مثل Cloudflare Workers.
+
+## 🛠 التقنيات المستخدمة
+
+- **[Hono](https://hono.dev/)**: إطار عمل خفيف وسريع جداً لبناء واجهات برمجة التطبيقات (APIs) يعمل بكفاءة على Cloudflare Workers.
+- **[Drizzle ORM](https://orm.drizzle.team/)**: أداة ربط كائنات قواعد البيانات (ORM) حديثة وآمنة، وتوفر أداءً عالياً.
+- **[Better-Auth](https://better-auth.com/)**: مكتبة مرنة وحديثة لإدارة المصادقة (Authentication) وتأمين نقاط النهاية (Endpoints).
+- **[Zod](https://zod.dev/)**: للتحقق من صحة البيانات (Data Validation) المدخلة للواجهات.
+- **بيئة الاستضافة**: [Cloudflare Workers](https://workers.cloudflare.com/) 🚀
+
+## 📂 هيكلية المشروع
+
+\`\`\`text
+backend/
+├── src/                # يحتوي على كافة الأكواد المصدرية (الروابط، المتحكمات، إلخ)
+├── drizzle/            # ملفات تهيئة قاعدة البيانات (Migrations/Schemas) عبر Drizzle
+├── drizzle.config.ts   # ملف إعدادات Drizzle ORM
+├── wrangler.jsonc      # إعدادات نشر Cloudflare Workers
+├── package.json        # مدير الحزم والاعتماديات
+└── seed.sql            # ملف بذور قاعدة البيانات الأولية
+\`\`\`
+
+## 🚀 البدء السريع (التشغيل محلياً)
+
+للبدء في تشغيل الخادم على جهازك المحلي، اتبع الخطوات التالية:
+
+### 1. تثبيت الحزم
+
+تأكد من وجود \`Node.js\` على جهازك، ثم قم بتشغيل:
+\`\`\`bash
 npm install
+\`\`\`
+
+### 2. إعداد متغيرات البيئة
+تأكد من إعداد المتغيرات البيئية اللازمة وتخزينها في ملف \`.dev.vars\` محلياً للتعامل مع \`wrangler\`.
+يجب أن يحتوي الملف كحد أدنى على المتغيرات المتعلقة بالمصادقة وقواعد البيانات:
+\`\`\`env
+BETTER_AUTH_SECRET=your_super_secret_string
+DATABASE_URL=your_database_connection_string
+\`\`\`
+
+### 3. عمليات قاعدة البيانات (Migrations)
+تأكد من تطبيق التحديثات على قاعدة البيانات المحلية أو السحابية باستخدام Drizzle:
+\`\`\`bash
+npx drizzle-kit push
+# أو 
+npx drizzle-kit generate
+\`\`\`
+
+### 4. تشغيل خادم التطوير
+لتشغيل الخادم في وضع التطوير مع تحديثات تلقائية:
+\`\`\`bash
 npm run dev
-```
+\`\`\`
+سيبدأ الخادم بالعمل عادةً على المنفذ \`http://127.0.0.1:8787\`.
 
-```txt
+## ☁️ النشر (Deployment)
+
+يتم نشر هذا المشروع مباشرة إلى **Cloudflare Workers**. يمكنك نشر أي تحديثات جديدة بتشغيل الأمر التالي:
+\`\`\`bash
 npm run deploy
-```
+\`\`\`
+تأكد من تسجيل الدخول مسبقاً في حساب Cloudflare الخاص بك عبر \`npx wrangler login\`.
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+## 🔒 المصادقة والأمان
 
-```txt
-npm run cf-typegen
-```
-
-Pass the `CloudflareBindings` as generics when instantiation `Hono`:
-
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
-```
+يعتمد النظام على **Better-Auth** لإدارة تسجيل الدخول وحماية الروابط الخاصة بلوحة التحكم وإدارة المالية والطلاب، وهو مرتبط بشكل مباشر مع قاعدة البيانات لحفظ الجلسات وتوفير أقصى درجات الأمان.
