@@ -4,7 +4,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { createMiddleware } from 'hono/factory';
 import { getDb } from './db/index';
-import { students, financeLogs } from './db/schema';
+import { students, financeLogs, studentSubscriptions } from './db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -103,6 +103,8 @@ const financeLogSchema = z.object({
   description: z.string().optional(),
 });
 
+const studentIdParam = z.string().regex(/^\d+$/, "معرف الطالب غير صالح").transform(Number);
+
 // --- Existing Logic --- //
 
 app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA API is running secure' }));
@@ -161,10 +163,11 @@ app.post('/api/students', requireAuth, async (c) => {
 app.patch('/api/students/:id/pay', requireAuth, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
-  const studentId = parseInt(c.req.param('id'));
-  if (isNaN(studentId)) {
-    return c.json({ error: "معرف الطالب غير صالح" }, 400);
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) {
+    return c.json({ error: parsedId.error.format() }, 400);
   }
+  const studentId = parsedId.data;
 
   const updated = await db.update(students)
     .set({ status: 'paid' })
@@ -181,8 +184,9 @@ app.patch('/api/students/:id/pay', requireAuth, async (c) => {
 app.patch('/api/students/:id', requireAuth, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
-  const studentId = parseInt(c.req.param('id'));
-  if (isNaN(studentId)) return c.json({ error: "معرف الطالب غير صالح" }, 400);
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
+  const studentId = parsedId.data;
 
   const body = await c.req.json();
   // Optional fields for update
@@ -209,8 +213,9 @@ app.patch('/api/students/:id', requireAuth, async (c) => {
 app.delete('/api/students/:id', requireAuth, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
-  const studentId = parseInt(c.req.param('id'));
-  if (isNaN(studentId)) return c.json({ error: "معرف الطالب غير صالح" }, 400);
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
+  const studentId = parsedId.data;
 
   const deleted = await db.delete(students)
     .where(and(eq(students.id, studentId), eq(students.userId, user.id)))
@@ -218,6 +223,107 @@ app.delete('/api/students/:id', requireAuth, async (c) => {
 
   if (deleted.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
   return c.json({ message: "Student deleted" });
+});
+
+app.get('/api/students/:id/payment-status', requireAuth, async (c) => {
+  const user = c.get('user');
+  const db = getDb(c.env.rahma_db);
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
+  const studentId = parsedId.data;
+
+  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.userId, user.id)));
+  if (studentList.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
+  const student = studentList[0];
+
+  const currentDate = new Date();
+  const enrollmentDate = new Date(student.enrollmentDate);
+  const academicYear = currentDate.getFullYear(); // For simplicity, using current year. Real apps might use custom logic.
+
+  // Get months required. E.g., if enrolled in Jan, difference is months since enrolled.
+  const monthsDiff = (currentDate.getFullYear() - enrollmentDate.getFullYear()) * 12 + currentDate.getMonth() - enrollmentDate.getMonth() + 1;
+  const maxMonthsThisYear = 12; // Assuming full 12 months in an academic year
+  
+  // Calculate required months for this year (up to 12)
+  // For simplicity, just get the current month index for logic
+  const currentMonthIndex = currentDate.getMonth() + 1;
+  
+  const subscriptions = await db.select().from(studentSubscriptions).where(and(eq(studentSubscriptions.studentId, studentId), eq(studentSubscriptions.academicYear, academicYear)));
+
+  const paymentPlan = [];
+  let totalBalanceDue = 0;
+
+  for (let month = 1; month <= 12; month++) {
+    const sub = subscriptions.find(s => s.monthIndex === month);
+    let status = 'upcoming';
+    
+    // Logic for past or current months
+    if (month <= currentMonthIndex) {
+      if (sub && sub.status === 'paid') {
+        status = 'paid';
+      } else {
+        status = 'unpaid';
+        totalBalanceDue += student.requiredAmount;
+      }
+    }
+
+    paymentPlan.push({
+      monthIndex: month,
+      status, // paid, unpaid, upcoming
+      amount: student.requiredAmount,
+      label: new Date(academicYear, month - 1, 1).toLocaleString('ar-EG', { month: 'long' })
+    });
+  }
+
+  return c.json({
+    studentId: student.id,
+    academicYear,
+    paymentPlan,
+    totalBalanceDue,
+    monthlyAmount: student.requiredAmount
+  });
+});
+
+app.post('/api/students/:id/payment', requireAuth, async (c) => {
+  const user = c.get('user');
+  const db = getDb(c.env.rahma_db);
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
+  const studentId = parsedId.data;
+
+  // Make sure admin owns student
+  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.userId, user.id)));
+  if (studentList.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
+  const student = studentList[0];
+
+  const bodySchema = z.object({
+    monthIndex: z.number().min(1).max(12),
+    academicYear: z.number(),
+    amount: z.number().positive()
+  });
+
+  const body = await c.req.json();
+  const validation = bodySchema.safeParse(body);
+  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+
+  const { monthIndex, academicYear, amount } = validation.data;
+
+  try {
+    const newPayment = await db.insert(studentSubscriptions).values({
+      studentId,
+      amount,
+      status: 'paid',
+      monthIndex,
+      academicYear,
+      createdAt: new Date(),
+    }).returning();
+    return c.json({ message: "تم تسجيل الدفع بنجاح", payment: newPayment[0] });
+  } catch (err: any) {
+    if (err.message.includes('UNIQUE constraint failed')) {
+      return c.json({ error: "يوجد دفع مسجل مسبقاً لهذا الشهر" }, 400);
+    }
+    return c.json({ error: "حدث خطأ غير متوقع" }, 500);
+  }
 });
 
 app.get('/api/finance/summary', requireAuth, async (c) => {

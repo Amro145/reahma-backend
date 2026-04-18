@@ -26,7 +26,8 @@
 			"binding": "rahma_db",
 			"database_name": "rahma-db",
 			"database_id": "c5d73268-a507-417e-9538-32bda5526a1b",
-			"remote": true
+			"remote": true,
+			"migrations_dir": "drizzle"
 		}
 	],
 	// "ai": {

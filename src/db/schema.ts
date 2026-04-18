@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, unique } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
     id: text("id").primaryKey(),
@@ -56,9 +56,22 @@ export const students = sqliteTable("students", {
     name: text("name").notNull(),
     whatsapp: text("whatsapp"),
     requiredAmount: real("requiredAmount").notNull(),
-    status: text("status", { enum: ["paid", "pending"] }).default("pending").notNull(),
+    status: text("status", { enum: ["paid", "pending"] }).default("pending").notNull(), // legacy, consider dropping later
+    enrollmentDate: integer("enrollmentDate", { mode: "timestamp" }).notNull().default(new Date()),
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
+
+export const studentSubscriptions = sqliteTable("studentSubscriptions", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    studentId: integer("studentId").notNull().references(() => students.id, { onDelete: "cascade" }),
+    amount: real("amount").notNull(),
+    status: text("status", { enum: ["paid", "pending"] }).notNull().default("pending"),
+    monthIndex: integer("monthIndex").notNull(), // 1-12
+    academicYear: integer("academicYear").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    unq: unique().on(t.studentId, t.monthIndex, t.academicYear)
+}));
 
 export const financeLogs = sqliteTable("financeLogs", {
     id: integer("id").primaryKey({ autoIncrement: true }),

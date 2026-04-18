@@ -29,6 +29,13 @@
       "when": 1776466169202,
       "tag": "0003_massive_bushwacker",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1776528563388,
+      "tag": "0004_old_makkari",
+      "breakpoints": true
     }
   ]
 }
