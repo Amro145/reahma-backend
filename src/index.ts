@@ -178,6 +178,48 @@ app.patch('/api/students/:id/pay', requireAuth, async (c) => {
   return c.json({ message: "Student marked as paid", student: updated[0] });
 });
 
+app.patch('/api/students/:id', requireAuth, async (c) => {
+  const user = c.get('user');
+  const db = getDb(c.env.rahma_db);
+  const studentId = parseInt(c.req.param('id'));
+  if (isNaN(studentId)) return c.json({ error: "معرف الطالب غير صالح" }, 400);
+
+  const body = await c.req.json();
+  // Optional fields for update
+  const updateSchema = z.object({
+    name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").optional(),
+    whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").optional(),
+    requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").optional(),
+  });
+
+  const validation = updateSchema.safeParse(body);
+  if (!validation.success) {
+    return c.json({ error: validation.error.format() }, 400);
+  }
+
+  const updated = await db.update(students)
+    .set(validation.data)
+    .where(and(eq(students.id, studentId), eq(students.userId, user.id)))
+    .returning();
+
+  if (updated.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
+  return c.json({ message: "Student updated", student: updated[0] });
+});
+
+app.delete('/api/students/:id', requireAuth, async (c) => {
+  const user = c.get('user');
+  const db = getDb(c.env.rahma_db);
+  const studentId = parseInt(c.req.param('id'));
+  if (isNaN(studentId)) return c.json({ error: "معرف الطالب غير صالح" }, 400);
+
+  const deleted = await db.delete(students)
+    .where(and(eq(students.id, studentId), eq(students.userId, user.id)))
+    .returning();
+
+  if (deleted.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
+  return c.json({ message: "Student deleted" });
+});
+
 app.get('/api/finance/summary', requireAuth, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
@@ -236,6 +278,46 @@ app.get('/api/finance/logs', requireAuth, async (c) => {
   const db = getDb(c.env.rahma_db);
   const logs = await db.select().from(financeLogs).where(eq(financeLogs.userId, user.id)).orderBy(desc(financeLogs.createdAt));
   return c.json({ logs });
+});
+
+app.patch('/api/finance/logs/:id', requireAuth, async (c) => {
+  const user = c.get('user');
+  const db = getDb(c.env.rahma_db);
+  const logId = parseInt(c.req.param('id'));
+  if (isNaN(logId)) return c.json({ error: "المعرف غير صالح" }, 400);
+
+  const body = await c.req.json();
+  const updateSchema = z.object({
+    type: z.enum(['income', 'expense'], { error: "نوع المعاملة غير صالح" }).optional(),
+    amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").optional(),
+    category: z.string().min(2, "الفئة مطلوبة").optional(),
+    description: z.string().optional(),
+  });
+
+  const validation = updateSchema.safeParse(body);
+  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+
+  const updated = await db.update(financeLogs)
+    .set(validation.data)
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.userId, user.id)))
+    .returning();
+
+  if (updated.length === 0) return c.json({ error: "السجل غير موجود" }, 404);
+  return c.json({ message: "Log updated", log: updated[0] });
+});
+
+app.delete('/api/finance/logs/:id', requireAuth, async (c) => {
+  const user = c.get('user');
+  const db = getDb(c.env.rahma_db);
+  const logId = parseInt(c.req.param('id'));
+  if (isNaN(logId)) return c.json({ error: "المعرف غير صالح" }, 400);
+
+  const deleted = await db.delete(financeLogs)
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.userId, user.id)))
+    .returning();
+
+  if (deleted.length === 0) return c.json({ error: "السجل غير موجود" }, 404);
+  return c.json({ message: "Log deleted" });
 });
 
 export default app;
