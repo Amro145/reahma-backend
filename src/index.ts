@@ -309,7 +309,7 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
   const { monthIndex, academicYear, amount } = validation.data;
 
   try {
-    const newPayment = await db.insert(studentSubscriptions).values({
+    const [newPayment] = await db.insert(studentSubscriptions).values({
       studentId,
       amount,
       status: 'paid',
@@ -317,7 +317,18 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
       academicYear,
       createdAt: new Date(),
     }).returning();
-    return c.json({ message: "تم تسجيل الدفع بنجاح", payment: newPayment[0] });
+
+    // إضافة العملية لسجل المالية تلقائياً
+    await db.insert(financeLogs).values({
+      userId: user.id,
+      type: 'income',
+      amount,
+      category: 'رسوم دراسية',
+      description: `رسوم شهر ${monthIndex} للطالب ${student.name}`,
+      createdAt: new Date(),
+    });
+
+    return c.json({ message: "تم تسجيل الدفع بنجاح", payment: newPayment });
   } catch (err: any) {
     if (err.message.includes('UNIQUE constraint failed')) {
       return c.json({ error: "يوجد دفع مسجل مسبقاً لهذا الشهر" }, 400);
