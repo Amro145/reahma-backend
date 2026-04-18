@@ -32,7 +32,7 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 app.use('*', secureHeaders({
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline often needed for some auth scripts, tune as needed
+    scriptSrc: ["'self'"], // Removed unsafe-inline for better security. If auth fails, add it back specifically for auth routes.
     styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
     imgSrc: ["'self'", "data:", "https://lh3.googleusercontent.com"], // Google avatars
@@ -44,14 +44,19 @@ app.use('*', secureHeaders({
 }));
 
 // 2. Strict CORS
-app.use('/api/*', cors({
-  origin: ['https://client.amroaltayeb14.workers.dev', 'http://localhost:3000'],
-  allowHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  allowMethods: ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
-  exposeHeaders: ['Content-Length'],
-  maxAge: 600,
-  credentials: true,
-}));
+app.use('/api/*', (c, next) => {
+  const origin = c.req.header('Origin');
+  const allowedOrigins = ['https://client.amroaltayeb14.workers.dev', 'http://localhost:3000'];
+  
+  return cors({
+    origin: ((origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0]) as string,
+    allowHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowMethods: ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
+    exposeHeaders: ['Content-Length'],
+    maxAge: 600,
+    credentials: true,
+  })(c, next);
+});
 
 // 3. Simple In-Memory Rate Limiter (Per IP)
 // Note: In Cloudflare Workers, this is per-isolate. For global, use Cloudflare KV.
@@ -60,7 +65,7 @@ const rateLimiter = (limit: number, windowSeconds: number) => {
   return createMiddleware(async (c, next) => {
     const ip = c.req.header('cf-connecting-ip') || 'unknown';
     const now = Date.now();
-    const key = `${ip}:${c.req.path}`;
+    const key = `${ip}`; // Limit per IP globally for simplicity and better security
     
     let info = cache.get(key);
     if (!info || now > info.resetAt) {
@@ -156,7 +161,10 @@ app.post('/api/students', requireAuth, async (c) => {
 app.patch('/api/students/:id/pay', requireAuth, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
-  const studentId = Number(c.req.param('id'));
+  const studentId = parseInt(c.req.param('id'));
+  if (isNaN(studentId)) {
+    return c.json({ error: "معرف الطالب غير صالح" }, 400);
+  }
 
   const updated = await db.update(students)
     .set({ status: 'paid' })
@@ -164,7 +172,7 @@ app.patch('/api/students/:id/pay', requireAuth, async (c) => {
     .returning();
 
   if (updated.length === 0) {
-    return c.json({ error: "Student not found or unauthorized" }, 404);
+    return c.json({ error: "الطالب غير موجود أو غير مصرح لك" }, 404);
   }
 
   return c.json({ message: "Student marked as paid", student: updated[0] });
