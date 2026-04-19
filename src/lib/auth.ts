@@ -9,8 +9,8 @@ export const initAuth = (env: any) => betterAuth({
         provider: "sqlite",
     }),
     secret: env.BETTER_AUTH_SECRET,
-    baseURL: env.BETTER_AUTH_URL || "https://backend.amroaltayeb14.workers.dev",
-    trustedOrigins: ["https://client.amroaltayeb14.workers.dev", "http://localhost:3000"],
+    baseURL: env.BETTER_AUTH_URL,
+    trustedOrigins: env.ALLOWED_ORIGINS?.split(',').map((o: string) => o.trim()) || [],
     socialProviders: {
         google: {
             clientId: env.GOOGLE_CLIENT_ID as string,
@@ -20,27 +20,6 @@ export const initAuth = (env: any) => betterAuth({
     plugins: [
         organization()
     ],
-    databaseHooks: {
-        user: {
-            create: {
-                after: async (user) => {
-                    const db = getDb(env.rahma_db);
-                    try {
-                        // Automatically join the headquarters organization as an admin
-                        await db.insert(member).values({
-                            id: `mem_${crypto.randomUUID()}`,
-                            userId: user.id,
-                            organizationId: 'org_hq_001',
-                            role: 'admin',
-                            createdAt: new Date()
-                        }).run();
-                    } catch (error) {
-                        console.error("Failed to auto-join organization:", error);
-                    }
-                }
-            }
-        }
-    },
     advanced: {
         ipAddress: {
             ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for"],

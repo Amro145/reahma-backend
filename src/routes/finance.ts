@@ -27,16 +27,17 @@ app.get('/summary', orgMiddleware, async (c) => {
     .where(eq(students.organizationId, orgId))
     .get();
 
-  // Financial Totals
-  const logs = await db.select().from(financeLogs).where(eq(financeLogs.organizationId, orgId));
+  // Optimized Financial Totals using SQL SUM
+  const totals = await db.select({
+    type: financeLogs.type,
+    total: sql<number>`sum(${financeLogs.amount})`
+  }).from(financeLogs)
+    .where(eq(financeLogs.organizationId, orgId))
+    .groupBy(financeLogs.type)
+    .all();
   
-  let totalIncome = 0;
-  let totalExpenses = 0;
-
-  logs.forEach(log => {
-    if (log.type === 'income') totalIncome += log.amount;
-    else totalExpenses += log.amount;
-  });
+  const totalIncome = totals.find(t => t.type === 'income')?.total || 0;
+  const totalExpenses = totals.find(t => t.type === 'expense')?.total || 0;
 
   return c.json({
     totalStudents: studentsCount?.count || 0,
@@ -69,22 +70,23 @@ app.post('/logs', orgMiddleware, async (c) => {
   const validation = logSchema.safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
-  let newLog: any = null;
-  // Transactions
-  await db.transaction(async (tx) => {
-    newLog = await tx.insert(financeLogs).values({
+  const newLog = await db.transaction(async (tx) => {
+    const log = await tx.insert(financeLogs).values({
       ...validation.data,
       organizationId: orgId,
       createdAt: new Date(),
     }).returning().get();
 
-    await tx.insert(auditLogs).values({
-      organizationId: orgId,
-      userId,
-      action: 'CREATE_FINANCE_LOG',
-      details: JSON.stringify(newLog),
-      createdAt: new Date(),
-    }).run();
+    if (log) {
+      await tx.insert(auditLogs).values({
+        organizationId: orgId,
+        userId,
+        action: 'CREATE_FINANCE_LOG',
+        details: JSON.stringify(log),
+        createdAt: new Date(),
+      }).run();
+    }
+    return log;
   });
 
   return c.json({ log: newLog });
@@ -103,14 +105,13 @@ app.patch('/logs/:id', orgMiddleware, async (c) => {
   const validation = logSchema.partial().safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
-  let updated: any = null;
-  await db.transaction(async (tx) => {
-    updated = await tx.update(financeLogs)
+  const updated = await db.transaction(async (tx) => {
+    const log = await tx.update(financeLogs)
       .set(validation.data)
       .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
       .returning().get();
 
-    if (updated) {
+    if (log) {
       await tx.insert(auditLogs).values({
         organizationId: orgId,
         userId,
@@ -119,6 +120,7 @@ app.patch('/logs/:id', orgMiddleware, async (c) => {
         createdAt: new Date(),
       }).run();
     }
+    return log;
   });
 
   if (!updated) return c.json({ error: "Finance log not found" }, 404);
@@ -138,22 +140,21 @@ app.delete('/logs/:id', orgMiddleware, async (c) => {
   const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
 
-  let deleted: any = null;
-
-  await db.transaction(async (tx) => {
-    deleted = await tx.delete(financeLogs)
+  const deleted = await db.transaction(async (tx) => {
+    const log = await tx.delete(financeLogs)
       .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
       .returning().get();
 
-    if (deleted) {
+    if (log) {
       await tx.insert(auditLogs).values({
         organizationId: orgId,
         userId,
         action: 'DELETE_FINANCE_LOG',
-        details: JSON.stringify({ logId, amount: deleted.amount, type: deleted.type }),
+        details: JSON.stringify({ logId, amount: log.amount, type: log.type }),
         createdAt: new Date(),
       }).run();
     }
+    return log;
   });
 
   if (!deleted) return c.json({ error: "Finance log not found" }, 404);

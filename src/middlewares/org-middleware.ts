@@ -46,8 +46,15 @@ export const orgMiddleware = createMiddleware<{ Bindings: Bindings; Variables: V
   }
 
   // Inject shared context
-  c.set("user", sessionResponse.user as any);
-  c.set("session", sessionResponse.session as any);
+  c.set("user", {
+      id: sessionResponse.user.id,
+      email: sessionResponse.user.email,
+      name: sessionResponse.user.name,
+  });
+  c.set("session", {
+      id: sessionResponse.session.id,
+      activeOrganizationId: sessionResponse.session.activeOrganizationId
+  });
   c.set("orgId", orgId);
   c.set("role", membership.role as 'owner' | 'admin' | 'member');
 

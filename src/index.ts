@@ -14,27 +14,30 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // --- Security Middlewares --- //
 
-app.use('*', secureHeaders({
-  contentSecurityPolicy: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'"], 
-    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-    fontSrc: ["'self'", "https://fonts.gstatic.com"],
-    imgSrc: ["'self'", "data:", "https://lh3.googleusercontent.com"],
-    connectSrc: ["'self'", "https://client.amroaltayeb14.workers.dev", "http://localhost:3000"],
-  },
-  strictTransportSecurity: 'max-age=31536000; includeSubDomains; preload',
-  xFrameOptions: 'DENY',
-  xContentTypeOptions: 'nosniff',
-}));
+app.use('*', (c, next) => {
+  const origins = c.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['http://localhost:3000'];
+  
+  return secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"], 
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https://lh3.googleusercontent.com"],
+      connectSrc: ["'self'", ...origins],
+    },
+    strictTransportSecurity: 'max-age=31536000; includeSubDomains; preload',
+    xFrameOptions: 'DENY',
+    xContentTypeOptions: 'nosniff',
+  })(c, next);
+});
 
 app.use('/api/*', (c, next) => {
   const origin = c.req.header('Origin');
-  const allowedOrigins = ['https://client.amroaltayeb14.workers.dev', 'http://localhost:3000'];
+  const allowedOrigins = c.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['http://localhost:3000'];
   
   return cors({
-    // Only allow specific origins in production/dev
-    origin: ((origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0]) as string,
+    origin: (origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0],
     allowHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-organization-id'],
     allowMethods: ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
     exposeHeaders: ['Content-Length'],
