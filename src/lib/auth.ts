@@ -18,5 +18,10 @@ export const initAuth = (env: any) => betterAuth({
     },
     plugins: [
         organization()
-    ]
+    ],
+    advanced: {
+        ipAddress: {
+            ipAddressHeaders: ["cf-connecting-ip"],
+        }
+    }
 });

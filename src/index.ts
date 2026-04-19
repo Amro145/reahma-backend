@@ -66,7 +66,7 @@ app.use('/api/*', (c, next) => {
 // 3. Cloudflare KV Rate Limiter
 const rateLimiterKV = (limit: number, windowSeconds: number) => {
   return createMiddleware<{ Bindings: Bindings }>(async (c, next) => {
-    const ip = c.req.header('cf-connecting-ip') || 'unknown';
+    const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
     // Keying by IP and path to allow isolation
     const pathPrefix = c.req.path.startsWith('/api/auth') ? 'auth' : 'api';
     const key = `rl:${ip}:${pathPrefix}`;
@@ -84,13 +84,15 @@ const rateLimiterKV = (limit: number, windowSeconds: number) => {
       return c.json({ error: "Too many requests. Please try again later." }, 429);
     }
 
+    // Use a fixed window by adding a timestamp segment to the key or just increase TTL slightly
+    // For simplicity, we just increase the limit as requested.
     await kv.put(key, (count + 1).toString(), { expirationTtl: Math.max(windowSeconds, 60) });
     await next();
   });
 };
 
-app.use('/api/auth/*', rateLimiterKV(10, 60)); // 10 req/min for Auth
-app.use('/api/*', rateLimiterKV(60, 60));      // 60 req/min for General
+app.use('/api/auth/*', rateLimiterKV(100, 60)); // Increased from 10 to 100
+app.use('/api/*', rateLimiterKV(500, 60));      // Increased from 60 to 500
 
 // --- Input Validation Schemas Hardening --- //
 
