@@ -28,7 +28,7 @@ export const initAuth = (env: any) => betterAuth({
                     try {
                         // Automatically join the headquarters organization as an admin
                         await db.insert(member).values({
-                            id: `mem_${Math.random().toString(36).substring(2, 11)}`,
+                            id: `mem_${crypto.randomUUID()}`,
                             userId: user.id,
                             organizationId: 'org_hq_001',
                             role: 'admin',
