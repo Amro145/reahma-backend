@@ -158,7 +158,10 @@ app.get('/:id/payment-status', orgMiddleware, async (c) => {
   const currentMonth = new Date().getMonth() + 1;
 
   const subscriptions = await db.select().from(studentSubscriptions)
-    .where(and(eq(studentSubscriptions.studentId, studentId), eq(studentSubscriptions.academicYear, currentYear)));
+    .where(and(eq(studentSubscriptions.studentId, studentId), eq(studentSubscriptions.academicYear, currentYear)))
+    .all();
+
+  console.log(`[Status] Fetched ${subscriptions.length} subscriptions for student ${studentId} in year ${currentYear}`);
 
   const paymentPlan = Array.from({ length: 12 }).map((_, idx) => {
     const monthIndex = idx + 1;
@@ -237,6 +240,8 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
     set: { status: 'paid', amount }
   }).returning().get();
 
+  console.log(`[Payment] Inserted/Updated subscription for student ${studentId}. Result:`, subscription);
+  
   const newLog = await db.insert(financeLogs).values({
     organizationId: orgId,
     type: 'income',
@@ -246,6 +251,8 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
     createdAt: new Date()
   }).returning().get();
   
+  console.log(`[Payment] Created finance log ${newLog?.id} for student ${studentId}`);
+
   await db.insert(auditLogs).values({
     organizationId: orgId,
     userId,
@@ -253,6 +260,15 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
     details: JSON.stringify({ studentId, monthIndex, logId: newLog?.id }),
     createdAt: new Date(),
   }).run();
+
+  // Update the legacy status field on the student record to reflect that they have paid something
+  // This is used for the main students list view.
+  await db.update(students)
+    .set({ status: 'paid' })
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .run();
+  
+  console.log(`[Payment] Success for student ${studentId}, month ${monthIndex}`);
 
   return c.json({ subscription });
 });
