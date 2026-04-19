@@ -10,8 +10,14 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const studentSchema = z.object({
   name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^\d+$/).min(10).max(20),
+  whatsapp: z.string().regex(/^[\d\s+\-()]+$/).min(8).max(25), // More flexible for international formats
   requiredAmount: z.number().positive().max(10000000),
+});
+
+const paymentSchema = z.object({
+  monthIndex: z.number().min(1).max(12),
+  academicYear: z.number().min(2024).max(2100),
+  amount: z.number().nonnegative(),
 });
 
 const studentIdParam = z.string().regex(/^\d+$/).transform(Number);
@@ -36,9 +42,19 @@ app.post('/', orgMiddleware, async (c) => {
   const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
   
-  const body = await c.req.json();
+  let body;
+  try {
+    body = await c.req.json();
+  } catch (err) {
+    console.error("[Students] Failed to parse JSON body:", err);
+    return c.json({ error: "Invalid or missing JSON body" }, 400);
+  }
+
   const validation = studentSchema.safeParse(body);
-  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+  if (!validation.success) {
+    console.warn("[Students] Validation failed:", validation.error.format());
+    return c.json({ error: validation.error.format() }, 400);
+  }
 
   const newStudent = await db.transaction(async (tx) => {
     const student = await tx.insert(students).values({
@@ -190,15 +206,33 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
   const studentId = parsedId.data;
 
   const db = getDb(c.env.rahma_db);
-  const body = await c.req.json();
-  const { monthIndex, academicYear, amount } = body;
+  
+  let body;
+  try {
+    body = await c.req.json();
+  } catch (err) {
+    console.error("[Payment] Failed to parse JSON body:", err);
+    return c.json({ error: "Invalid or missing JSON body" }, 400);
+  }
+  
+  const validation = paymentSchema.safeParse(body);
+  if (!validation.success) {
+    console.warn("[Payment] Validation failed:", validation.error.format());
+    return c.json({ error: validation.error.format() }, 400);
+  }
+  
+  const { monthIndex, academicYear, amount } = validation.data;
+  console.log(`[Payment] Attempting payment for student ${studentId}, month ${monthIndex}, year ${academicYear}, amount ${amount}`);
 
   // Security Check: Verify student ownership before payment
   const student = await db.select().from(students)
     .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
     .get();
 
-  if (!student) return c.json({ error: "Student not found in this organization" }, 404);
+  if (!student) {
+    console.warn(`[Payment] Student ${studentId} not found in org ${orgId}`);
+    return c.json({ error: "Student not found in this organization" }, 404);
+  }
 
   const result = await db.transaction(async (tx) => {
     const subscription = await tx.insert(studentSubscriptions).values({
