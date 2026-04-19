@@ -52,11 +52,16 @@ app.get('/summary', orgMiddleware, async (c) => {
 app.get('/logs', orgMiddleware, async (c) => {
   const orgId = c.get('orgId');
   const db = getDb(c.env.rahma_db);
+  
+  const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
+  const offset = Number(c.req.query('offset')) || 0;
+
   const data = await db.select()
     .from(financeLogs)
     .where(eq(financeLogs.organizationId, orgId))
     .orderBy(desc(financeLogs.createdAt))
-    .limit(100); // Pagination limit added
+    .limit(limit)
+    .offset(offset);
   
   return c.json({ logs: data });
 });
