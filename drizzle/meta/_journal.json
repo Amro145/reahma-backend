@@ -8,6 +8,20 @@
       "when": 1776623213962,
       "tag": "0000_common_white_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776626082258,
+      "tag": "0001_demonic_shinobi_shaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776626341884,
+      "tag": "0002_woozy_yellow_claw",
+      "breakpoints": true
     }
   ]
 }

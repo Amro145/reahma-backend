@@ -21,7 +21,7 @@ export const initAuth = (env: any) => betterAuth({
     ],
     advanced: {
         ipAddress: {
-            ipAddressHeaders: ["cf-connecting-ip"],
+            ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for"],
         }
     }
 });

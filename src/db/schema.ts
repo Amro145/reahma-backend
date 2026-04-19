@@ -8,6 +8,7 @@ export const user = sqliteTable("user", {
     image: text("image"),
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+    platform: text("platform"), // المنصة
 });
 
 export const session = sqliteTable("session", {
@@ -19,6 +20,7 @@ export const session = sqliteTable("session", {
     ipAddress: text("ipAddress"),
     userAgent: text("userAgent"),
     userId: text("userId").notNull().references(() => user.id),
+    activeOrganizationId: text("activeOrganizationId"),
 });
 
 export const account = sqliteTable("account", {
