@@ -8,9 +8,15 @@
 DELETE FROM studentSubscriptions;
 DELETE FROM financeLogs;
 DELETE FROM students;
+DELETE FROM member;
+DELETE FROM organization;
 
 -- Reset auto-increment counters
 DELETE FROM sqlite_sequence WHERE name IN ('students', 'studentSubscriptions', 'financeLogs');
+
+-- 1.5 Create Seed Organization
+INSERT INTO organization (id, name, slug, createdAt) VALUES 
+  ('LBsggT2tH6kiS12Y4vN2gXoL5nubbPRN', 'جمعية رحمة الخيرية', 'rahma-charity', 1735689600);
 
 -- =============================================
 -- 2. STUDENTS (10 students)
@@ -18,7 +24,7 @@ DELETE FROM sqlite_sequence WHERE name IN ('students', 'studentSubscriptions', '
 -- Jan 1 2026 = 1735689600
 -- =============================================
 
-INSERT INTO students (userId, name, whatsapp, requiredAmount, status, enrollmentDate, createdAt) VALUES
+INSERT INTO students (organizationId, name, whatsapp, requiredAmount, status, enrollmentDate, createdAt) VALUES
   ('LBsggT2tH6kiS12Y4vN2gXoL5nubbPRN', 'أحمد محمد السيد',    '01012345678', 500, 'pending', 1735689600, 1735689600),
   ('LBsggT2tH6kiS12Y4vN2gXoL5nubbPRN', 'فاطمة علي حسن',     '01123456789', 500, 'pending', 1735689600, 1735689600),
   ('LBsggT2tH6kiS12Y4vN2gXoL5nubbPRN', 'محمود إبراهيم عمر', '01234567890', 750, 'pending', 1735689600, 1735689600),
@@ -85,7 +91,7 @@ INSERT INTO studentSubscriptions (studentId, amount, status, monthIndex, academi
 -- =============================================
 
 -- === Subscription Income (matches subscriptions above) ===
-INSERT INTO financeLogs (userId, type, amount, category, description, createdAt) VALUES
+INSERT INTO financeLogs (organizationId, type, amount, category, description, createdAt) VALUES
 
   -- January subscriptions
   ('LBsggT2tH6kiS12Y4vN2gXoL5nubbPRN', 'income', 500, 'رسوم دراسية', 'اشتراك شهر 1 للطالب أحمد محمد السيد',    1736121600),

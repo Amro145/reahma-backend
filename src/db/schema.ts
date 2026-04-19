@@ -46,13 +46,40 @@ export const verification = sqliteTable("verification", {
     updatedAt: integer("updatedAt", { mode: "timestamp" })
 });
 
+export const organization = sqliteTable("organization", {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").unique(),
+    logo: text("logo"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+    metadata: text("metadata")
+});
+
+export const member = sqliteTable("member", {
+    id: text("id").primaryKey(),
+    organizationId: text("organizationId").notNull().references(() => organization.id),
+    userId: text("userId").notNull().references(() => user.id),
+    role: text("role").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull()
+});
+
+export const invitation = sqliteTable("invitation", {
+    id: text("id").primaryKey(),
+    organizationId: text("organizationId").notNull().references(() => organization.id),
+    email: text("email").notNull(),
+    role: text("role"),
+    status: text("status").notNull(),
+    expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
+    inviterId: text("inviterId").notNull().references(() => user.id)
+});
+
 
 
 // --- جداول إدارة النظام ---
 
 export const students = sqliteTable("students", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").notNull().references(() => user.id), // Owner (Admin)
+    organizationId: text("organizationId").notNull().references(() => organization.id),
     name: text("name").notNull(),
     whatsapp: text("whatsapp"),
     requiredAmount: real("requiredAmount").notNull(),
@@ -75,7 +102,7 @@ export const studentSubscriptions = sqliteTable("studentSubscriptions", {
 
 export const financeLogs = sqliteTable("financeLogs", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").notNull().references(() => user.id), // Owner (Admin)
+    organizationId: text("organizationId").notNull().references(() => organization.id),
     type: text("type", { enum: ["income", "expense"] }).notNull(),
     amount: real("amount").notNull(),
     category: text("category").notNull(),

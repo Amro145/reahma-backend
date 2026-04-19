@@ -23,6 +23,10 @@ type Variables = {
     email: string;
     name: string;
   };
+  session: {
+    id: string;
+    activeOrganizationId?: string | null;
+  };
 };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -123,20 +127,25 @@ const requireAuth = createMiddleware<{ Bindings: Bindings; Variables: Variables 
     return c.json({ error: "Unauthorized" }, 401);
   }
   c.set('user', sessionResponse.user);
+  c.set('session', sessionResponse.session as any);
   await next();
 });
 
 // --- Endpoints with Validation --- //
 
 app.get('/api/students', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+  
   const db = getDb(c.env.rahma_db);
-  const allStudents = await db.select().from(students).where(eq(students.userId, user.id));
+  const allStudents = await db.select().from(students).where(eq(students.organizationId, session.activeOrganizationId));
   return c.json({ students: allStudents });
 });
 
 app.post('/api/students', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   
   const body = await c.req.json();
@@ -149,7 +158,7 @@ app.post('/api/students', requireAuth, async (c) => {
   const { name, whatsapp, requiredAmount } = validation.data;
 
   const newStudent = await db.insert(students).values({
-    userId: user.id,
+    organizationId: session.activeOrganizationId,
     name,
     whatsapp,
     requiredAmount,
@@ -161,7 +170,9 @@ app.post('/api/students', requireAuth, async (c) => {
 });
 
 app.patch('/api/students/:id/pay', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) {
@@ -171,25 +182,26 @@ app.patch('/api/students/:id/pay', requireAuth, async (c) => {
 
   const updated = await db.update(students)
     .set({ status: 'paid' })
-    .where(and(eq(students.id, studentId), eq(students.userId, user.id)))
+    .where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)))
     .returning();
 
   if (updated.length === 0) {
-    return c.json({ error: "الطالب غير موجود أو غير مصرح لك" }, 404);
+    return c.json({ error: "الطالب غير موجود أو غير تابع لمؤسستك" }, 404);
   }
 
   return c.json({ message: "Student marked as paid", student: updated[0] });
 });
 
 app.patch('/api/students/:id', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
   const studentId = parsedId.data;
 
   const body = await c.req.json();
-  // Optional fields for update
   const updateSchema = z.object({
     name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").max(100, "الاسم طويل جداً").optional(),
     whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").max(20, "رقم الواتساب طويل جداً").optional(),
@@ -203,36 +215,40 @@ app.patch('/api/students/:id', requireAuth, async (c) => {
 
   const updated = await db.update(students)
     .set(validation.data)
-    .where(and(eq(students.id, studentId), eq(students.userId, user.id)))
+    .where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)))
     .returning();
 
-  if (updated.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
+  if (updated.length === 0) return c.json({ error: "الطالب غير موجود أو غير تابع للمؤسسة" }, 404);
   return c.json({ message: "Student updated", student: updated[0] });
 });
 
 app.delete('/api/students/:id', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
   const studentId = parsedId.data;
 
   const deleted = await db.delete(students)
-    .where(and(eq(students.id, studentId), eq(students.userId, user.id)))
+    .where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)))
     .returning();
 
-  if (deleted.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
+  if (deleted.length === 0) return c.json({ error: "الطالب غير موجود أو غير تابع للمؤسسة" }, 404);
   return c.json({ message: "Student deleted" });
 });
 
 app.get('/api/students/:id/payment-status', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
   const studentId = parsedId.data;
 
-  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.userId, user.id)));
+  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)));
   if (studentList.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
   const student = studentList[0];
 
@@ -267,11 +283,13 @@ app.get('/api/students/:id/payment-status', requireAuth, async (c) => {
       }
     }
 
+    const dateForMonthLabel = new Date(academicYear, month - 1, 1);
+    
     paymentPlan.push({
       monthIndex: month,
       status, // paid, unpaid, upcoming
       amount: student.requiredAmount,
-      label: new Date(academicYear, month - 1, 1).toLocaleString('ar-EG', { month: 'long' })
+      label: dateForMonthLabel.toLocaleString('ar-EG', { month: 'long' })
     });
   }
 
@@ -285,14 +303,16 @@ app.get('/api/students/:id/payment-status', requireAuth, async (c) => {
 });
 
 app.post('/api/students/:id/payment', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
   const studentId = parsedId.data;
 
   // Make sure admin owns student
-  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.userId, user.id)));
+  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)));
   if (studentList.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
   const student = studentList[0];
 
@@ -320,7 +340,7 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
 
     // إضافة العملية لسجل المالية تلقائياً
     await db.insert(financeLogs).values({
-      userId: user.id,
+      organizationId: session.activeOrganizationId,
       type: 'income',
       amount,
       category: 'رسوم دراسية',
@@ -338,21 +358,23 @@ app.post('/api/students/:id/payment', requireAuth, async (c) => {
 });
 
 app.get('/api/finance/summary', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
-  const userId = user.id;
+  const orgId = session.activeOrganizationId;
 
   // Aggregate student stats directly in D1
   const studentStatsResult = await db.select({
     totalRequired: sql<number>`COALESCE(SUM(${students.requiredAmount}), 0)`,
     totalCollected: sql<number>`COALESCE(SUM(CASE WHEN ${students.status} = 'paid' THEN ${students.requiredAmount} ELSE 0 END), 0)`
-  }).from(students).where(eq(students.userId, userId));
+  }).from(students).where(eq(students.organizationId, orgId));
 
   // Aggregate financeLogs stats directly in D1
   const financeStatsResult = await db.select({
     totalIncome: sql<number>`COALESCE(SUM(CASE WHEN ${financeLogs.type} = 'income' THEN ${financeLogs.amount} ELSE 0 END), 0)`,
     totalExpenses: sql<number>`COALESCE(SUM(CASE WHEN ${financeLogs.type} = 'expense' THEN ${financeLogs.amount} ELSE 0 END), 0)`
-  }).from(financeLogs).where(eq(financeLogs.userId, userId));
+  }).from(financeLogs).where(eq(financeLogs.organizationId, orgId));
 
   const s = studentStatsResult[0] || { totalRequired: 0, totalCollected: 0 };
   const f = financeStatsResult[0] || { totalIncome: 0, totalExpenses: 0 };
@@ -374,7 +396,9 @@ app.get('/api/finance/summary', requireAuth, async (c) => {
 });
 
 app.post('/api/finance/logs', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   
   const body = await c.req.json();
@@ -387,7 +411,7 @@ app.post('/api/finance/logs', requireAuth, async (c) => {
   const { type, amount, category, description } = validation.data;
 
   const newLog = await db.insert(financeLogs).values({
-    userId: user.id,
+    organizationId: session.activeOrganizationId,
     type,
     amount,
     category,
@@ -399,14 +423,18 @@ app.post('/api/finance/logs', requireAuth, async (c) => {
 });
 
 app.get('/api/finance/logs', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
-  const logs = await db.select().from(financeLogs).where(eq(financeLogs.userId, user.id)).orderBy(desc(financeLogs.createdAt));
+  const logs = await db.select().from(financeLogs).where(eq(financeLogs.organizationId, session.activeOrganizationId)).orderBy(desc(financeLogs.createdAt));
   return c.json({ logs });
 });
 
 app.patch('/api/finance/logs/:id', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const logId = parseInt(c.req.param('id'));
   if (isNaN(logId)) return c.json({ error: "المعرف غير صالح" }, 400);
@@ -424,24 +452,26 @@ app.patch('/api/finance/logs/:id', requireAuth, async (c) => {
 
   const updated = await db.update(financeLogs)
     .set(validation.data)
-    .where(and(eq(financeLogs.id, logId), eq(financeLogs.userId, user.id)))
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, session.activeOrganizationId)))
     .returning();
 
-  if (updated.length === 0) return c.json({ error: "السجل غير موجود" }, 404);
+  if (updated.length === 0) return c.json({ error: "السجل غير موجود أو غير تابع لمؤسستك" }, 404);
   return c.json({ message: "Log updated", log: updated[0] });
 });
 
 app.delete('/api/finance/logs/:id', requireAuth, async (c) => {
-  const user = c.get('user');
+  const session = c.get('session');
+  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+
   const db = getDb(c.env.rahma_db);
   const logId = parseInt(c.req.param('id'));
   if (isNaN(logId)) return c.json({ error: "المعرف غير صالح" }, 400);
 
   const deleted = await db.delete(financeLogs)
-    .where(and(eq(financeLogs.id, logId), eq(financeLogs.userId, user.id)))
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, session.activeOrganizationId)))
     .returning();
 
-  if (deleted.length === 0) return c.json({ error: "السجل غير موجود" }, 404);
+  if (deleted.length === 0) return c.json({ error: "السجل غير موجود أو غير تابع لمؤسستك" }, 404);
   return c.json({ message: "Log deleted" });
 });
 

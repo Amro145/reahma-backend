@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1776461947271,
-      "tag": "0000_past_hellcat",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1776462647581,
-      "tag": "0001_pale_demogoblin",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1776466148171,
-      "tag": "0002_gorgeous_doctor_doom",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1776466169202,
-      "tag": "0003_massive_bushwacker",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1776528563388,
-      "tag": "0004_old_makkari",
+      "when": 1776623213962,
+      "tag": "0000_common_white_queen",
       "breakpoints": true
     }
   ]
