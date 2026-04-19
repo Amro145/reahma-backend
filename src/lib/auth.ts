@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { organization } from "better-auth/plugins";
 import { getDb } from "../db/index";
+import { member } from "../db/schema";
 
 export const initAuth = (env: any) => betterAuth({
     database: drizzleAdapter(getDb(env.rahma_db), {
@@ -19,6 +20,27 @@ export const initAuth = (env: any) => betterAuth({
     plugins: [
         organization()
     ],
+    databaseHooks: {
+        user: {
+            create: {
+                after: async (user) => {
+                    const db = getDb(env.rahma_db);
+                    try {
+                        // Automatically join the headquarters organization as an admin
+                        await db.insert(member).values({
+                            id: `mem_${Math.random().toString(36).substring(2, 11)}`,
+                            userId: user.id,
+                            organizationId: 'org_hq_001',
+                            role: 'admin',
+                            createdAt: new Date()
+                        }).run();
+                    } catch (error) {
+                        console.error("Failed to auto-join organization:", error);
+                    }
+                }
+            }
+        }
+    },
     advanced: {
         ipAddress: {
             ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for"],

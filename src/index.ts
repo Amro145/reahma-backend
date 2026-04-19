@@ -113,7 +113,7 @@ app.post('/api/students', orgMiddleware, async (c) => {
     action: 'CREATE_STUDENT',
     details: JSON.stringify(newStudent),
     createdAt: new Date(),
-  });
+  }).run();
 
   return c.json({ student: newStudent });
 });
@@ -145,7 +145,7 @@ app.patch('/api/students/:id', orgMiddleware, async (c) => {
     action: 'UPDATE_STUDENT',
     details: JSON.stringify({ studentId, changes: validation.data }),
     createdAt: new Date(),
-  });
+  }).run();
 
   return c.json({ student: updated });
 });
@@ -175,7 +175,7 @@ app.delete('/api/students/:id', orgMiddleware, async (c) => {
     action: 'DELETE_STUDENT',
     details: JSON.stringify({ studentId, name: deleted.name }),
     createdAt: new Date(),
-  });
+  }).run();
 
   return c.json({ success: true });
 });
@@ -252,7 +252,7 @@ app.post('/api/finance/logs', orgMiddleware, async (c) => {
     action: 'CREATE_FINANCE_LOG',
     details: JSON.stringify(newLog),
     createdAt: new Date(),
-  });
+  }).run();
 
   return c.json({ log: newLog });
 });
@@ -287,7 +287,7 @@ app.patch('/api/finance/logs/:id', orgMiddleware, async (c) => {
     action: 'UPDATE_FINANCE_LOG',
     details: JSON.stringify({ logId, changes: validation.data }),
     createdAt: new Date(),
-  });
+  }).run();
 
   return c.json({ log: updated });
 });
@@ -313,7 +313,7 @@ app.delete('/api/finance/logs/:id', orgMiddleware, async (c) => {
     action: 'DELETE_FINANCE_LOG',
     details: JSON.stringify({ logId, amount: deleted.amount, type: deleted.type }),
     createdAt: new Date(),
-  });
+  }).run();
 
   return c.json({ success: true });
 });
@@ -372,7 +372,7 @@ app.patch('/api/students/:id/pay', orgMiddleware, async (c) => {
     category: 'رسوم دراسية',
     description: `سداد شهر ${monthIndex} للطالب ${studentId}`,
     createdAt: new Date()
-  });
+  }).run();
 
   return c.json({ subscription: newSub });
 });
