@@ -4,43 +4,23 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { createMiddleware } from 'hono/factory';
 import { getDb } from './db/index';
-import { students, financeLogs, studentSubscriptions } from './db/schema';
+import { students, financeLogs, studentSubscriptions, auditLogs } from './db/schema';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { z } from 'zod';
-
-type Bindings = {
-  rahma_db: D1Database;
-  RATE_LIMITER: KVNamespace;
-  BETTER_AUTH_SECRET: string;
-  BETTER_AUTH_URL: string;
-  GOOGLE_CLIENT_ID: string;
-  GOOGLE_CLIENT_SECRET: string;
-};
-
-type Variables = {
-  user: {
-    id: string;
-    email: string;
-    name: string;
-  };
-  session: {
-    id: string;
-    activeOrganizationId?: string | null;
-  };
-};
+import { Bindings, Variables } from './types';
+import { orgMiddleware } from './middlewares/org-middleware';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // --- Security Middlewares --- //
 
-// 1. Secure Headers (HSTS, CSP, X-Frame-Options, etc.)
 app.use('*', secureHeaders({
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
-    scriptSrc: ["'self'"], // Removed unsafe-inline for better security. If auth fails, add it back specifically for auth routes.
+    scriptSrc: ["'self'"], 
     styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
-    imgSrc: ["'self'", "data:", "https://lh3.googleusercontent.com"], // Google avatars
+    imgSrc: ["'self'", "data:", "https://lh3.googleusercontent.com"],
     connectSrc: ["'self'", "https://client.amroaltayeb14.workers.dev", "http://localhost:3000"],
   },
   strictTransportSecurity: 'max-age=31536000; includeSubDomains; preload',
@@ -48,14 +28,13 @@ app.use('*', secureHeaders({
   xContentTypeOptions: 'nosniff',
 }));
 
-// 2. Strict CORS
 app.use('/api/*', (c, next) => {
   const origin = c.req.header('Origin');
   const allowedOrigins = ['https://client.amroaltayeb14.workers.dev', 'http://localhost:3000'];
   
   return cors({
     origin: ((origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0]) as string,
-    allowHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-organization-id'],
     allowMethods: ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
     exposeHeaders: ['Content-Length'],
     maxAge: 600,
@@ -63,418 +42,373 @@ app.use('/api/*', (c, next) => {
   })(c, next);
 });
 
-// 3. Cloudflare KV Rate Limiter
 const rateLimiterKV = (limit: number, windowSeconds: number) => {
   return createMiddleware<{ Bindings: Bindings }>(async (c, next) => {
     const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
-    // Keying by IP and path to allow isolation
     const pathPrefix = c.req.path.startsWith('/api/auth') ? 'auth' : 'api';
     const key = `rl:${ip}:${pathPrefix}`;
     const kv = c.env.RATE_LIMITER;
 
-    if (!kv) {
-      console.warn("KV RATE_LIMITER binding is missing. Skipping rate limit.");
-      return await next();
-    }
+    if (!kv) return await next();
 
     const current = await kv.get(key);
     const count = current ? parseInt(current) : 0;
 
     if (count >= limit) {
-      return c.json({ error: "Too many requests. Please try again later." }, 429);
+      return c.json({ error: "Too many requests" }, 429);
     }
 
-    // Use a fixed window by adding a timestamp segment to the key or just increase TTL slightly
-    // For simplicity, we just increase the limit as requested.
     await kv.put(key, (count + 1).toString(), { expirationTtl: Math.max(windowSeconds, 60) });
     await next();
   });
 };
 
-app.use('/api/auth/*', rateLimiterKV(100, 60)); // Increased from 10 to 100
-app.use('/api/*', rateLimiterKV(500, 60));      // Increased from 60 to 500
+app.use('/api/auth/*', rateLimiterKV(100, 60));
+app.use('/api/*', rateLimiterKV(500, 60));
 
-// --- Input Validation Schemas Hardening --- //
-
-const studentSchema = z.object({
-  name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").max(100, "الاسم طويل جداً"),
-  whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").max(20, "رقم الواتساب طويل جداً"),
-  requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(10000000, "المبلغ غير منطقي"),
-});
-
-const financeLogSchema = z.object({
-  type: z.enum(['income', 'expense'], { error: "نوع المعاملة غير صالح" }),
-  amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(50000000, "المبلغ غير منطقي"),
-  category: z.string().min(2, "الفئة مطلوبة").max(100, "الفئة طويلة جداً"),
-  description: z.string().max(512, "الوصف طويل جداً").optional(),
-});
-
-const studentIdParam = z.string().regex(/^\d+$/, "معرف الطالب غير صالح").transform(Number);
-
-// --- Existing Logic --- //
-
-app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA API is running secure' }));
+// --- Auth Handler --- //
 
 app.on(["POST", "GET"], "/api/auth/*", (c) => {
   const auth = initAuth(c.env);
   return auth.handler(c.req.raw);
 });
 
-const requireAuth = createMiddleware<{ Bindings: Bindings; Variables: Variables }>(async (c, next) => {
-  const auth = initAuth(c.env);
-  const sessionResponse = await auth.api.getSession({
-    headers: c.req.raw.headers
-  });
-  if (!sessionResponse || !sessionResponse.user) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  c.set('user', sessionResponse.user);
-  c.set('session', sessionResponse.session as any);
-  await next();
+// --- Validation Schemas --- //
+
+const studentSchema = z.object({
+  name: z.string().min(2).max(100),
+  whatsapp: z.string().regex(/^\d+$/).min(10).max(20),
+  requiredAmount: z.number().positive().max(10000000),
 });
 
-// --- Endpoints with Validation --- //
+const studentIdParam = z.string().regex(/^\d+$/).transform(Number);
 
-app.get('/api/students', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-  
+// --- Core Endpoints --- //
+
+app.get('/api/students', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
   const db = getDb(c.env.rahma_db);
-  const allStudents = await db.select().from(students).where(eq(students.organizationId, session.activeOrganizationId));
-  return c.json({ students: allStudents });
+  const data = await db.select().from(students).where(eq(students.organizationId, orgId));
+  return c.json({ students: data });
 });
 
-app.post('/api/students', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
+app.post('/api/students', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
+  const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
   
   const body = await c.req.json();
   const validation = studentSchema.safeParse(body);
-  
-  if (!validation.success) {
-    return c.json({ error: validation.error.format() }, 400);
-  }
-
-  const { name, whatsapp, requiredAmount } = validation.data;
+  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
   const newStudent = await db.insert(students).values({
-    organizationId: session.activeOrganizationId,
-    name,
-    whatsapp,
-    requiredAmount,
-    status: 'pending',
+    ...validation.data,
+    organizationId: orgId,
     createdAt: new Date(),
-  }).returning();
+  }).returning().get();
 
-  return c.json({ message: "Student added", student: newStudent[0] });
-});
-
-app.patch('/api/students/:id/pay', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
-  const db = getDb(c.env.rahma_db);
-  const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) {
-    return c.json({ error: parsedId.error.format() }, 400);
-  }
-  const studentId = parsedId.data;
-
-  const updated = await db.update(students)
-    .set({ status: 'paid' })
-    .where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)))
-    .returning();
-
-  if (updated.length === 0) {
-    return c.json({ error: "الطالب غير موجود أو غير تابع لمؤسستك" }, 404);
-  }
-
-  return c.json({ message: "Student marked as paid", student: updated[0] });
-});
-
-app.patch('/api/students/:id', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
-  const db = getDb(c.env.rahma_db);
-  const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
-  const studentId = parsedId.data;
-
-  const body = await c.req.json();
-  const updateSchema = z.object({
-    name: z.string().min(2, "الاسم يجب أن يكون أكثر من حرفين").max(100, "الاسم طويل جداً").optional(),
-    whatsapp: z.string().regex(/^\d+$/, "رقم الواتساب يجب أن يحتوي على أرقام فقط").min(10, "رقم الواتساب غير صالح").max(20, "رقم الواتساب طويل جداً").optional(),
-    requiredAmount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(10000000, "المبلغ غير منطقي").optional(),
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'CREATE_STUDENT',
+    details: JSON.stringify(newStudent),
+    createdAt: new Date(),
   });
 
-  const validation = updateSchema.safeParse(body);
-  if (!validation.success) {
-    return c.json({ error: validation.error.format() }, 400);
-  }
+  return c.json({ student: newStudent });
+});
+
+app.patch('/api/students/:id', orgMiddleware, async (c) => {
+  const studentIdStr = c.req.param('id');
+  const parsedId = studentIdParam.safeParse(studentIdStr);
+  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  const studentId = parsedId.data;
+
+  const orgId = c.get('orgId');
+  const userId = c.get('user').id;
+  const db = getDb(c.env.rahma_db);
+
+  const body = await c.req.json();
+  const validation = studentSchema.partial().safeParse(body);
+  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
   const updated = await db.update(students)
     .set(validation.data)
-    .where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)))
-    .returning();
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .returning().get();
 
-  if (updated.length === 0) return c.json({ error: "الطالب غير موجود أو غير تابع للمؤسسة" }, 404);
-  return c.json({ message: "Student updated", student: updated[0] });
+  if (!updated) return c.json({ error: "Not found" }, 404);
+
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'UPDATE_STUDENT',
+    details: JSON.stringify({ studentId, changes: validation.data }),
+    createdAt: new Date(),
+  });
+
+  return c.json({ student: updated });
 });
 
-app.delete('/api/students/:id', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+app.delete('/api/students/:id', orgMiddleware, async (c) => {
+  const role = c.get('role');
+  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
 
-  const db = getDb(c.env.rahma_db);
-  const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
+  const studentIdStr = c.req.param('id');
+  const parsedId = studentIdParam.safeParse(studentIdStr);
+  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
   const studentId = parsedId.data;
+
+  const orgId = c.get('orgId');
+  const userId = c.get('user').id;
+  const db = getDb(c.env.rahma_db);
 
   const deleted = await db.delete(students)
-    .where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)))
-    .returning();
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .returning().get();
 
-  if (deleted.length === 0) return c.json({ error: "الطالب غير موجود أو غير تابع للمؤسسة" }, 404);
-  return c.json({ message: "Student deleted" });
+  if (!deleted) return c.json({ error: "Not found" }, 404);
+
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'DELETE_STUDENT',
+    details: JSON.stringify({ studentId, name: deleted.name }),
+    createdAt: new Date(),
+  });
+
+  return c.json({ success: true });
 });
 
-app.get('/api/students/:id/payment-status', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+// --- Financial Endpoints --- //
 
+app.get('/api/finance/summary', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
   const db = getDb(c.env.rahma_db);
-  const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
-  const studentId = parsedId.data;
 
-  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)));
-  if (studentList.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
-  const student = studentList[0];
+  // Total Students
+  const studentsCount = await db.select({ count: sql<number>`count(*)` })
+    .from(students)
+    .where(eq(students.organizationId, orgId))
+    .get();
 
-  const currentDate = new Date();
-  const enrollmentDate = new Date(student.enrollmentDate);
-  const academicYear = currentDate.getFullYear(); // For simplicity, using current year. Real apps might use custom logic.
-
-  // Get months required. E.g., if enrolled in Jan, difference is months since enrolled.
-  const monthsDiff = (currentDate.getFullYear() - enrollmentDate.getFullYear()) * 12 + currentDate.getMonth() - enrollmentDate.getMonth() + 1;
-  const maxMonthsThisYear = 12; // Assuming full 12 months in an academic year
+  // Financial Totals
+  const logs = await db.select().from(financeLogs).where(eq(financeLogs.organizationId, orgId));
   
-  // Calculate required months for this year (up to 12)
-  // For simplicity, just get the current month index for logic
-  const currentMonthIndex = currentDate.getMonth() + 1;
-  
-  const subscriptions = await db.select().from(studentSubscriptions).where(and(eq(studentSubscriptions.studentId, studentId), eq(studentSubscriptions.academicYear, academicYear)));
+  let totalIncome = 0;
+  let totalExpenses = 0;
 
-  const paymentPlan = [];
-  let totalBalanceDue = 0;
-
-  for (let month = 1; month <= 12; month++) {
-    const sub = subscriptions.find(s => s.monthIndex === month);
-    let status = 'upcoming';
-    
-    // Logic for past or current months
-    if (month <= currentMonthIndex) {
-      if (sub && sub.status === 'paid') {
-        status = 'paid';
-      } else {
-        status = 'unpaid';
-        totalBalanceDue += student.requiredAmount;
-      }
-    }
-
-    const dateForMonthLabel = new Date(academicYear, month - 1, 1);
-    
-    paymentPlan.push({
-      monthIndex: month,
-      status, // paid, unpaid, upcoming
-      amount: student.requiredAmount,
-      label: dateForMonthLabel.toLocaleString('ar-EG', { month: 'long' })
-    });
-  }
+  logs.forEach(log => {
+    if (log.type === 'income') totalIncome += log.amount;
+    else totalExpenses += log.amount;
+  });
 
   return c.json({
-    studentId: student.id,
-    academicYear,
-    paymentPlan,
-    totalBalanceDue,
-    monthlyAmount: student.requiredAmount
+    totalStudents: studentsCount?.count || 0,
+    finance: {
+      totalIncome,
+      totalExpenses,
+      netBalance: totalIncome - totalExpenses
+    }
   });
 });
 
-app.post('/api/students/:id/payment', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
+app.get('/api/finance/logs', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
   const db = getDb(c.env.rahma_db);
-  const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: parsedId.error.format() }, 400);
-  const studentId = parsedId.data;
+  const data = await db.select()
+    .from(financeLogs)
+    .where(eq(financeLogs.organizationId, orgId))
+    .orderBy(desc(financeLogs.createdAt));
+  
+  return c.json({ logs: data });
+});
 
-  // Make sure admin owns student
-  const studentList = await db.select().from(students).where(and(eq(students.id, studentId), eq(students.organizationId, session.activeOrganizationId)));
-  if (studentList.length === 0) return c.json({ error: "الطالب غير موجود" }, 404);
-  const student = studentList[0];
-
-  const bodySchema = z.object({
-    monthIndex: z.number().min(1).max(12),
-    academicYear: z.number(),
-    amount: z.number().positive().max(10000000, "المبلغ غير منطقي")
-  });
+app.post('/api/finance/logs', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
+  const userId = c.get('user').id;
+  const db = getDb(c.env.rahma_db);
 
   const body = await c.req.json();
-  const validation = bodySchema.safeParse(body);
+  const logSchema = z.object({
+    type: z.enum(['income', 'expense']),
+    amount: z.number().positive(),
+    category: z.string().min(1),
+    description: z.string().optional(),
+  });
+
+  const validation = logSchema.safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
-  const { monthIndex, academicYear, amount } = validation.data;
-
-  try {
-    const [newPayment] = await db.insert(studentSubscriptions).values({
-      studentId,
-      amount,
-      status: 'paid',
-      monthIndex,
-      academicYear,
-      createdAt: new Date(),
-    }).returning();
-
-    // إضافة العملية لسجل المالية تلقائياً
-    await db.insert(financeLogs).values({
-      organizationId: session.activeOrganizationId,
-      type: 'income',
-      amount,
-      category: 'رسوم دراسية',
-      description: `اشتراك شهر ${monthIndex} للطالب ${student.name}`,
-      createdAt: new Date(),
-    });
-
-    return c.json({ message: "تم تسجيل الدفع بنجاح", payment: newPayment });
-  } catch (err: any) {
-    if (err.message.includes('UNIQUE constraint failed')) {
-      return c.json({ error: "يوجد دفع مسجل مسبقاً لهذا الشهر" }, 400);
-    }
-    return c.json({ error: "حدث خطأ غير متوقع" }, 500);
-  }
-});
-
-app.get('/api/finance/summary', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
-  const db = getDb(c.env.rahma_db);
-  const orgId = session.activeOrganizationId;
-
-  // Aggregate student stats directly in D1
-  const studentStatsResult = await db.select({
-    totalRequired: sql<number>`COALESCE(SUM(${students.requiredAmount}), 0)`,
-    totalCollected: sql<number>`COALESCE(SUM(CASE WHEN ${students.status} = 'paid' THEN ${students.requiredAmount} ELSE 0 END), 0)`
-  }).from(students).where(eq(students.organizationId, orgId));
-
-  // Aggregate financeLogs stats directly in D1
-  const financeStatsResult = await db.select({
-    totalIncome: sql<number>`COALESCE(SUM(CASE WHEN ${financeLogs.type} = 'income' THEN ${financeLogs.amount} ELSE 0 END), 0)`,
-    totalExpenses: sql<number>`COALESCE(SUM(CASE WHEN ${financeLogs.type} = 'expense' THEN ${financeLogs.amount} ELSE 0 END), 0)`
-  }).from(financeLogs).where(eq(financeLogs.organizationId, orgId));
-
-  const s = studentStatsResult[0] || { totalRequired: 0, totalCollected: 0 };
-  const f = financeStatsResult[0] || { totalIncome: 0, totalExpenses: 0 };
-
-  return c.json({
-    summary: {
-      students: { 
-        totalRequired: s.totalRequired, 
-        totalCollected: s.totalCollected, 
-        pending: s.totalRequired - s.totalCollected 
-      },
-      finances: { 
-        totalIncome: f.totalIncome, 
-        totalExpenses: f.totalExpenses, 
-        netBalance: (s.totalCollected + f.totalIncome) - f.totalExpenses 
-      }
-    }
-  });
-});
-
-app.post('/api/finance/logs', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
-  const db = getDb(c.env.rahma_db);
-  
-  const body = await c.req.json();
-  const validation = financeLogSchema.safeParse(body);
-
-  if (!validation.success) {
-    return c.json({ error: validation.error.format() }, 400);
-  }
-
-  const { type, amount, category, description } = validation.data;
-
   const newLog = await db.insert(financeLogs).values({
-    organizationId: session.activeOrganizationId,
-    type,
-    amount,
-    category,
-    description: description || '',
+    ...validation.data,
+    organizationId: orgId,
     createdAt: new Date(),
-  }).returning();
+  }).returning().get();
 
-  return c.json({ message: "Finance log added", log: newLog[0] });
-});
-
-app.get('/api/finance/logs', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
-  const db = getDb(c.env.rahma_db);
-  const logs = await db.select().from(financeLogs).where(eq(financeLogs.organizationId, session.activeOrganizationId)).orderBy(desc(financeLogs.createdAt));
-  return c.json({ logs });
-});
-
-app.patch('/api/finance/logs/:id', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
-
-  const db = getDb(c.env.rahma_db);
-  const logId = parseInt(c.req.param('id'));
-  if (isNaN(logId)) return c.json({ error: "المعرف غير صالح" }, 400);
-
-  const body = await c.req.json();
-  const updateSchema = z.object({
-    type: z.enum(['income', 'expense'], { error: "نوع المعاملة غير صالح" }).optional(),
-    amount: z.number().positive("المبلغ يجب أن يكون رقماً موجباً").max(50000000, "المبلغ غير منطقي").optional(),
-    category: z.string().min(2, "الفئة مطلوبة").max(100, "الفئة طويلة جداً").optional(),
-    description: z.string().max(512, "الوصف طويل جداً").optional(),
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'CREATE_FINANCE_LOG',
+    details: JSON.stringify(newLog),
+    createdAt: new Date(),
   });
 
-  const validation = updateSchema.safeParse(body);
+  return c.json({ log: newLog });
+});
+
+app.patch('/api/finance/logs/:id', orgMiddleware, async (c) => {
+  const logId = parseInt(c.req.param('id'));
+  const orgId = c.get('orgId');
+  const userId = c.get('user').id;
+  const db = getDb(c.env.rahma_db);
+
+  const body = await c.req.json();
+  const logSchema = z.object({
+    type: z.enum(['income', 'expense']).optional(),
+    amount: z.number().positive().optional(),
+    category: z.string().min(1).optional(),
+    description: z.string().optional(),
+  });
+
+  const validation = logSchema.safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
   const updated = await db.update(financeLogs)
     .set(validation.data)
-    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, session.activeOrganizationId)))
-    .returning();
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
+    .returning().get();
 
-  if (updated.length === 0) return c.json({ error: "السجل غير موجود أو غير تابع لمؤسستك" }, 404);
-  return c.json({ message: "Log updated", log: updated[0] });
+  if (!updated) return c.json({ error: "Finance log not found" }, 404);
+
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'UPDATE_FINANCE_LOG',
+    details: JSON.stringify({ logId, changes: validation.data }),
+    createdAt: new Date(),
+  });
+
+  return c.json({ log: updated });
 });
 
-app.delete('/api/finance/logs/:id', requireAuth, async (c) => {
-  const session = c.get('session');
-  if (!session.activeOrganizationId) return c.json({ error: "يجب اختيار مؤسسة أولاً" }, 400);
+app.delete('/api/finance/logs/:id', orgMiddleware, async (c) => {
+  const role = c.get('role');
+  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
 
-  const db = getDb(c.env.rahma_db);
   const logId = parseInt(c.req.param('id'));
-  if (isNaN(logId)) return c.json({ error: "المعرف غير صالح" }, 400);
+  const orgId = c.get('orgId');
+  const userId = c.get('user').id;
+  const db = getDb(c.env.rahma_db);
 
   const deleted = await db.delete(financeLogs)
-    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, session.activeOrganizationId)))
-    .returning();
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
+    .returning().get();
 
-  if (deleted.length === 0) return c.json({ error: "السجل غير موجود أو غير تابع لمؤسستك" }, 404);
-  return c.json({ message: "Log deleted" });
+  if (!deleted) return c.json({ error: "Finance log not found" }, 404);
+
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'DELETE_FINANCE_LOG',
+    details: JSON.stringify({ logId, amount: deleted.amount, type: deleted.type }),
+    createdAt: new Date(),
+  });
+
+  return c.json({ success: true });
+});
+
+// --- Advanced Payment Tracking --- //
+
+app.get('/api/students/:id/payment-status', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
+  const studentIdStr = c.req.param('id');
+  const parsedId = studentIdParam.safeParse(studentIdStr);
+  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  const studentId = parsedId.data;
+
+  const db = getDb(c.env.rahma_db);
+  
+  const student = await db.select().from(students)
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId))).get();
+  
+  if (!student) return c.json({ error: "Not found" }, 404);
+
+  const currentYear = new Date().getFullYear();
+  const subscriptions = await db.select().from(studentSubscriptions)
+    .where(and(eq(studentSubscriptions.studentId, studentId), eq(studentSubscriptions.academicYear, currentYear)));
+
+  return c.json({ student, subscriptions, currentYear });
+});
+
+app.patch('/api/students/:id/pay', orgMiddleware, async (c) => {
+  const orgId = c.get('orgId');
+  const studentIdStr = c.req.param('id');
+  const parsedId = studentIdParam.safeParse(studentIdStr);
+  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  const studentId = parsedId.data;
+
+  const db = getDb(c.env.rahma_db);
+  const body = await c.req.json();
+  const { monthIndex, academicYear, amount } = body;
+
+  const newSub = await db.insert(studentSubscriptions).values({
+    studentId,
+    monthIndex,
+    academicYear,
+    amount,
+    status: 'paid',
+    createdAt: new Date()
+  }).onConflictDoUpdate({
+    target: [studentSubscriptions.studentId, studentSubscriptions.monthIndex, studentSubscriptions.academicYear],
+    set: { status: 'paid', amount }
+  }).returning().get();
+
+  // Also log to financeLogs
+  await db.insert(financeLogs).values({
+    organizationId: orgId,
+    type: 'income',
+    amount,
+    category: 'رسوم دراسية',
+    description: `سداد شهر ${monthIndex} للطالب ${studentId}`,
+    createdAt: new Date()
+  });
+
+  return c.json({ subscription: newSub });
+});
+
+// --- Invitation Workflow --- //
+
+app.post('/api/organizations/invite', orgMiddleware, async (c) => {
+  const role = c.get('role');
+  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
+
+  const body = await c.req.json();
+  const inviteSchema = z.object({
+    email: z.string().email(),
+    role: z.enum(['admin', 'member']).default('member'),
+  });
+
+  const validation = inviteSchema.safeParse(body);
+  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+
+  const auth = initAuth(c.env);
+  const orgId = c.get('orgId');
+
+  try {
+    const invitation = await auth.api.createInvitation({
+      body: {
+        email: validation.data.email,
+        role: validation.data.role,
+        organizationId: orgId,
+      },
+      headers: c.req.raw.headers,
+    });
+
+    return c.json({ invitation });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to create invitation" }, 500);
+  }
 });
 
 export default app;

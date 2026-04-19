@@ -90,6 +90,15 @@ export const students = sqliteTable("students", {
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
 
+export const auditLogs = sqliteTable("auditLogs", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    organizationId: text("organizationId").notNull().references(() => organization.id),
+    userId: text("userId").notNull().references(() => user.id),
+    action: text("action").notNull(), // e.g. 'UPDATE_STUDENT', 'DELETE_STUDENT'
+    details: text("details"), // JSON string of changes
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+});
+
 export const studentSubscriptions = sqliteTable("studentSubscriptions", {
     id: integer("id").primaryKey({ autoIncrement: true }),
     studentId: integer("studentId").notNull().references(() => students.id, { onDelete: "cascade" }),
