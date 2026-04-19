@@ -56,24 +56,21 @@ app.post('/', orgMiddleware, async (c) => {
     return c.json({ error: validation.error.format() }, 400);
   }
 
-  const newStudent = await db.transaction(async (tx) => {
-    const student = await tx.insert(students).values({
-      ...validation.data,
-      organizationId: orgId,
-      createdAt: new Date(),
-    }).returning().get();
+  const newStudent = await db.insert(students).values({
+    ...validation.data,
+    organizationId: orgId,
+    createdAt: new Date(),
+  }).returning().get();
 
-    if (student) {
-      await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
-        action: 'CREATE_STUDENT',
-        details: JSON.stringify(student),
-        createdAt: new Date(),
-      }).run();
-    }
-    return student;
-  });
+  if (newStudent) {
+    await db.insert(auditLogs).values({
+      organizationId: orgId,
+      userId,
+      action: 'CREATE_STUDENT',
+      details: JSON.stringify(newStudent),
+      createdAt: new Date(),
+    }).run();
+  }
 
   return c.json({ student: newStudent });
 });
@@ -91,23 +88,20 @@ app.patch('/:id', orgMiddleware, async (c) => {
   const validation = studentSchema.partial().safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
-  const updated = await db.transaction(async (tx) => {
-    const student = await tx.update(students)
-      .set(validation.data)
-      .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
-      .returning().get();
+  const updated = await db.update(students)
+    .set(validation.data)
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .returning().get();
 
-    if (student) {
-      await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
-        action: 'UPDATE_STUDENT',
-        details: JSON.stringify({ studentId, changes: validation.data }),
-        createdAt: new Date(),
-      }).run();
-    }
-    return student;
-  });
+  if (updated) {
+    await db.insert(auditLogs).values({
+      organizationId: orgId,
+      userId,
+      action: 'UPDATE_STUDENT',
+      details: JSON.stringify({ studentId, changes: validation.data }),
+      createdAt: new Date(),
+    }).run();
+  }
 
   if (!updated) return c.json({ error: "Not found" }, 404);
 
@@ -126,22 +120,19 @@ app.delete('/:id', orgMiddleware, async (c) => {
   const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
 
-  const deleted = await db.transaction(async (tx) => {
-    const student = await tx.delete(students)
-      .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
-      .returning().get();
+  const deleted = await db.delete(students)
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .returning().get();
 
-    if (student) {
-      await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
-        action: 'DELETE_STUDENT',
-        details: JSON.stringify({ studentId, name: student.name }),
-        createdAt: new Date(),
-      }).run();
-    }
-    return student;
-  });
+  if (deleted) {
+    await db.insert(auditLogs).values({
+      organizationId: orgId,
+      userId,
+      action: 'DELETE_STUDENT',
+      details: JSON.stringify({ studentId, name: deleted.name }),
+      createdAt: new Date(),
+    }).run();
+  }
 
   if (!deleted) return c.json({ error: "Not found" }, 404);
 
@@ -234,40 +225,36 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
     return c.json({ error: "Student not found in this organization" }, 404);
   }
 
-  const result = await db.transaction(async (tx) => {
-    const subscription = await tx.insert(studentSubscriptions).values({
-      studentId,
-      monthIndex,
-      academicYear,
-      amount,
-      status: 'paid',
-      createdAt: new Date()
-    }).onConflictDoUpdate({
-      target: [studentSubscriptions.studentId, studentSubscriptions.monthIndex, studentSubscriptions.academicYear],
-      set: { status: 'paid', amount }
-    }).returning().get();
+  const subscription = await db.insert(studentSubscriptions).values({
+    studentId,
+    monthIndex,
+    academicYear,
+    amount,
+    status: 'paid',
+    createdAt: new Date()
+  }).onConflictDoUpdate({
+    target: [studentSubscriptions.studentId, studentSubscriptions.monthIndex, studentSubscriptions.academicYear],
+    set: { status: 'paid', amount }
+  }).returning().get();
 
-    const newLog = await tx.insert(financeLogs).values({
-      organizationId: orgId,
-      type: 'income',
-      amount,
-      category: 'رسوم دراسية',
-      description: `سداد شهر ${monthIndex} للطالب ${student.name} (ID: ${studentId})`,
-      createdAt: new Date()
-    }).returning().get();
-    
-    await tx.insert(auditLogs).values({
-      organizationId: orgId,
-      userId,
-      action: 'PAY_STUDENT_SUBSCRIPTIONS',
-      details: JSON.stringify({ studentId, monthIndex, logId: newLog?.id }),
-      createdAt: new Date(),
-    }).run();
+  const newLog = await db.insert(financeLogs).values({
+    organizationId: orgId,
+    type: 'income',
+    amount,
+    category: 'رسوم دراسية',
+    description: `سداد شهر ${monthIndex} للطالب ${student.name} (ID: ${studentId})`,
+    createdAt: new Date()
+  }).returning().get();
+  
+  await db.insert(auditLogs).values({
+    organizationId: orgId,
+    userId,
+    action: 'PAY_STUDENT_SUBSCRIPTIONS',
+    details: JSON.stringify({ studentId, monthIndex, logId: newLog?.id }),
+    createdAt: new Date(),
+  }).run();
 
-    return subscription;
-  });
-
-  return c.json({ subscription: result });
+  return c.json({ subscription });
 });
 
 export default app;

@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, real, unique } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 export const user = sqliteTable("user", {
     id: text("id").primaryKey(),
@@ -86,7 +87,7 @@ export const students = sqliteTable("students", {
     whatsapp: text("whatsapp"),
     requiredAmount: real("requiredAmount").notNull(),
     status: text("status", { enum: ["paid", "pending"] }).default("pending").notNull(), // legacy, consider dropping later
-    enrollmentDate: integer("enrollmentDate", { mode: "timestamp" }).notNull().default(new Date()),
+    enrollmentDate: integer("enrollmentDate", { mode: "timestamp" }).notNull().default(sql`CURRENT_TIMESTAMP`),
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
 
