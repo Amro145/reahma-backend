@@ -63,8 +63,8 @@ const rateLimiterKV = (limit: number, windowSeconds: number) => {
   });
 };
 
-app.use('/api/auth/*', rateLimiterKV(100, 60));
-app.use('/api/*', rateLimiterKV(500, 60));
+app.use('/api/auth/*', rateLimiterKV(500, 60));
+app.use('/api/*', rateLimiterKV(2000, 60));
 
 // --- Auth Handler --- //
 
