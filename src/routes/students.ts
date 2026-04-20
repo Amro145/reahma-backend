@@ -64,6 +64,23 @@ app.get('/', orgMiddleware, async (c) => {
   return c.json({ students: data });
 });
 
+app.get('/:id', orgMiddleware, async (c) => {
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) return c.json({ error: "معرّف الطالب غير صالح" }, 400);
+  const studentId = parsedId.data;
+
+  const orgId = c.get('orgId');
+  const db = getDb(c.env.rahma_db);
+
+  const student = await db.select().from(students)
+    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .get();
+
+  if (!student) return c.json({ error: "الطالب غير موجود" }, 404);
+
+  return c.json({ student });
+});
+
 app.post('/', orgMiddleware, async (c) => {
   const orgId = c.get('orgId');
   const userId = c.get('user').id;

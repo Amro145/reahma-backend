@@ -77,6 +77,11 @@ app.on(["POST", "GET"], "/api/auth/*", (c) => {
   return auth.handler(c.req.raw);
 });
 
+app.onError((err, c) => {
+  console.error('[GlobalError]', err.message, err.stack);
+  return c.json({ error: "حدث خطأ غير متوقع في الخادم، يرجى المحاولة مرة أخرى" }, 500);
+});
+
 // --- Core Endpoints --- //
 
 app.route('/api/students', studentsRouter);
