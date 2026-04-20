@@ -9,18 +9,45 @@ import { Bindings, Variables } from '../types';
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const studentSchema = z.object({
-  name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^[\d\s+\-()]+$/).min(8).max(25), // More flexible for international formats
-  requiredAmount: z.number().positive().max(10000000),
+  name: z.string()
+    .min(2, "اسم الطالب يجب أن يكون حرفين على الأقل")
+    .max(100, "اسم الطالب طويل جداً (الحد الأقصى 100 حرف)"),
+  whatsapp: z.string()
+    .regex(/^[\d\s+\-()]+$/, "رقم الواتساب يحتوي على أحرف غير مقبولة")
+    .min(8, "رقم الواتساب قصير جداً")
+    .max(25, "رقم الواتساب طويل جداً"),
+  requiredAmount: z.number({
+    required_error: "المبلغ المطلوب مطلوب",
+    invalid_type_error: "المبلغ المطلوب يجب أن يكون رقماً"
+  })
+    .positive("يجب أن يكون المبلغ أكبر من صفر")
+    .max(10000000, "المبلغ المدخل كبير جداً"),
 });
 
 const paymentSchema = z.object({
-  monthIndex: z.number().min(1).max(12),
-  academicYear: z.number().min(2024).max(2100),
-  amount: z.number().nonnegative(),
+  monthIndex: z.number({
+    required_error: "رقم الشهر مطلوب",
+    invalid_type_error: "رقم الشهر يجب أن يكون رقماً"
+  }).min(1, "رقم الشهر غير صالح").max(12, "رقم الشهر غير صالح"),
+  academicYear: z.number({
+    required_error: "السنة الدراسية مطلوبة",
+    invalid_type_error: "السنة الدراسية يجب أن تكون رقماً"
+  }).min(2024, "السنة الدراسية غير صالحة").max(2100, "السنة الدراسية غير صالحة"),
+  amount: z.number({
+    required_error: "المبلغ مطلوب",
+    invalid_type_error: "المبلغ يجب أن يكون رقماً"
+  }).nonnegative("يجب أن يكون المبلغ صفراً أو أكثر"),
 });
 
 const studentIdParam = z.string().regex(/^\d+$/).transform(Number);
+
+const parseBody = async (c: Parameters<typeof orgMiddleware>[0]) => {
+  try {
+    return { body: await c.req.json(), error: null };
+  } catch {
+    return { body: null, error: "بيانات الطلب غير صالحة أو مفقودة" };
+  }
+};
 
 app.get('/', orgMiddleware, async (c) => {
   const orgId = c.get('orgId');
@@ -42,18 +69,13 @@ app.post('/', orgMiddleware, async (c) => {
   const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
   
-  let body;
-  try {
-    body = await c.req.json();
-  } catch (err) {
-    console.error("[Students] Failed to parse JSON body:", err);
-    return c.json({ error: "Invalid or missing JSON body" }, 400);
-  }
+  const { body, error: bodyError } = await parseBody(c);
+  if (bodyError) return c.json({ error: bodyError }, 400);
 
   const validation = studentSchema.safeParse(body);
   if (!validation.success) {
-    console.warn("[Students] Validation failed:", validation.error.format());
-    return c.json({ error: validation.error.format() }, 400);
+    const errorMsg = validation.error.errors[0]?.message || "بيانات غير صالحة";
+    return c.json({ error: errorMsg }, 400);
   }
 
   const newStudent = await db.insert(students).values({
@@ -62,58 +84,63 @@ app.post('/', orgMiddleware, async (c) => {
     createdAt: new Date(),
   }).returning().get();
 
-  if (newStudent) {
-    await db.insert(auditLogs).values({
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
       organizationId: orgId,
       userId,
       action: 'CREATE_STUDENT',
       details: JSON.stringify(newStudent),
       createdAt: new Date(),
-    }).run();
-  }
+    }).run().catch(err => console.error('[AuditLog] CREATE_STUDENT failed:', err))
+  );
 
   return c.json({ student: newStudent });
 });
 
 app.patch('/:id', orgMiddleware, async (c) => {
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  if (!parsedId.success) return c.json({ error: "معرّف الطالب غير صالح" }, 400);
   const studentId = parsedId.data;
 
   const orgId = c.get('orgId');
   const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
 
-  const body = await c.req.json();
+  const { body, error: bodyError } = await parseBody(c);
+  if (bodyError) return c.json({ error: bodyError }, 400);
+
   const validation = studentSchema.partial().safeParse(body);
-  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+  if (!validation.success) {
+    const errorMsg = validation.error.errors[0]?.message || "بيانات غير صالحة";
+    return c.json({ error: errorMsg }, 400);
+  }
 
   const updated = await db.update(students)
     .set(validation.data)
     .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
     .returning().get();
 
-  if (updated) {
-    await db.insert(auditLogs).values({
+  if (!updated) return c.json({ error: "الطالب غير موجود" }, 404);
+
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
       organizationId: orgId,
       userId,
       action: 'UPDATE_STUDENT',
       details: JSON.stringify({ studentId, changes: validation.data }),
       createdAt: new Date(),
-    }).run();
-  }
-
-  if (!updated) return c.json({ error: "Not found" }, 404);
+    }).run().catch(err => console.error('[AuditLog] UPDATE_STUDENT failed:', err))
+  );
 
   return c.json({ student: updated });
 });
 
 app.delete('/:id', orgMiddleware, async (c) => {
   const role = c.get('role');
-  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
+  if (role !== 'owner' && role !== 'admin') return c.json({ error: "غير مصرح لك بهذا الإجراء" }, 403);
 
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  if (!parsedId.success) return c.json({ error: "معرّف الطالب غير صالح" }, 400);
   const studentId = parsedId.data;
 
   const orgId = c.get('orgId');
@@ -124,17 +151,17 @@ app.delete('/:id', orgMiddleware, async (c) => {
     .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
     .returning().get();
 
-  if (deleted) {
-    await db.insert(auditLogs).values({
+  if (!deleted) return c.json({ error: "الطالب غير موجود" }, 404);
+
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
       organizationId: orgId,
       userId,
       action: 'DELETE_STUDENT',
       details: JSON.stringify({ studentId, name: deleted.name }),
       createdAt: new Date(),
-    }).run();
-  }
-
-  if (!deleted) return c.json({ error: "Not found" }, 404);
+    }).run().catch(err => console.error('[AuditLog] DELETE_STUDENT failed:', err))
+  );
 
   return c.json({ success: true });
 });
@@ -144,7 +171,7 @@ app.delete('/:id', orgMiddleware, async (c) => {
 app.get('/:id/payment-status', orgMiddleware, async (c) => {
   const orgId = c.get('orgId');
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  if (!parsedId.success) return c.json({ error: "معرّف الطالب غير صالح" }, 400);
   const studentId = parsedId.data;
 
   const db = getDb(c.env.rahma_db);
@@ -152,7 +179,7 @@ app.get('/:id/payment-status', orgMiddleware, async (c) => {
   const student = await db.select().from(students)
     .where(and(eq(students.id, studentId), eq(students.organizationId, orgId))).get();
   
-  if (!student) return c.json({ error: "Not found" }, 404);
+  if (!student) return c.json({ error: "الطالب غير موجود في هذه المؤسسة" }, 404);
 
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
@@ -160,8 +187,6 @@ app.get('/:id/payment-status', orgMiddleware, async (c) => {
   const subscriptions = await db.select().from(studentSubscriptions)
     .where(and(eq(studentSubscriptions.studentId, studentId), eq(studentSubscriptions.academicYear, currentYear)))
     .all();
-
-  console.log(`[Status] Fetched ${subscriptions.length} subscriptions for student ${studentId} in year ${currentYear}`);
 
   const paymentPlan = Array.from({ length: 12 }).map((_, idx) => {
     const monthIndex = idx + 1;
@@ -196,37 +221,27 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
   const orgId = c.get('orgId');
   const userId = c.get('user').id;
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  if (!parsedId.success) return c.json({ error: "معرّف الطالب غير صالح" }, 400);
   const studentId = parsedId.data;
 
   const db = getDb(c.env.rahma_db);
   
-  let body;
-  try {
-    body = await c.req.json();
-  } catch (err) {
-    console.error("[Payment] Failed to parse JSON body:", err);
-    return c.json({ error: "Invalid or missing JSON body" }, 400);
-  }
+  const { body, error: bodyError } = await parseBody(c);
+  if (bodyError) return c.json({ error: bodyError }, 400);
   
   const validation = paymentSchema.safeParse(body);
   if (!validation.success) {
-    console.warn("[Payment] Validation failed:", validation.error.format());
-    return c.json({ error: validation.error.format() }, 400);
+    const errorMsg = validation.error.errors[0]?.message || "بيانات الدفع غير صالحة";
+    return c.json({ error: errorMsg }, 400);
   }
   
   const { monthIndex, academicYear, amount } = validation.data;
-  console.log(`[Payment] Attempting payment for student ${studentId}, month ${monthIndex}, year ${academicYear}, amount ${amount}`);
 
-  // Security Check: Verify student ownership before payment
   const student = await db.select().from(students)
     .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
     .get();
 
-  if (!student) {
-    console.warn(`[Payment] Student ${studentId} not found in org ${orgId}`);
-    return c.json({ error: "Student not found in this organization" }, 404);
-  }
+  if (!student) return c.json({ error: "الطالب غير موجود في هذه المؤسسة" }, 404);
 
   const subscription = await db.insert(studentSubscriptions).values({
     studentId,
@@ -240,35 +255,31 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
     set: { status: 'paid', amount }
   }).returning().get();
 
-  console.log(`[Payment] Inserted/Updated subscription for student ${studentId}. Result:`, subscription);
-  
-  const newLog = await db.insert(financeLogs).values({
+  // These are critical operations for data integrity, run sequentially
+  await db.insert(financeLogs).values({
     organizationId: orgId,
     type: 'income',
     amount,
     category: 'رسوم دراسية',
     description: `سداد شهر ${monthIndex} للطالب ${student.name} (ID: ${studentId})`,
     createdAt: new Date()
-  }).returning().get();
-  
-  console.log(`[Payment] Created finance log ${newLog?.id} for student ${studentId}`);
-
-  await db.insert(auditLogs).values({
-    organizationId: orgId,
-    userId,
-    action: 'PAY_STUDENT_SUBSCRIPTIONS',
-    details: JSON.stringify({ studentId, monthIndex, logId: newLog?.id }),
-    createdAt: new Date(),
   }).run();
 
-  // Update the legacy status field on the student record to reflect that they have paid something
-  // This is used for the main students list view.
   await db.update(students)
     .set({ status: 'paid' })
     .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
     .run();
-  
-  console.log(`[Payment] Success for student ${studentId}, month ${monthIndex}`);
+
+  // Non-critical audit log
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
+      organizationId: orgId,
+      userId,
+      action: 'PAY_STUDENT_SUBSCRIPTIONS',
+      details: JSON.stringify({ studentId, monthIndex }),
+      createdAt: new Date(),
+    }).run().catch(err => console.error('[AuditLog] PAY_STUDENT failed:', err))
+  );
 
   return c.json({ subscription });
 });
