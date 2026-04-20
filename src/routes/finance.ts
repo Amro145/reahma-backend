@@ -11,10 +11,15 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const logIdParam = z.string().regex(/^\d+$/).transform(Number);
 
 const logSchema = z.object({
-  type: z.enum(['income', 'expense']),
-  amount: z.number().positive(),
-  category: z.string().min(1),
-  description: z.string().optional(),
+  type: z.enum(['income', 'expense'], {
+    errorMap: () => ({ message: "نوع المعاملة يجب أن يكون إما إيراد أو مصروف" })
+  }),
+  amount: z.number({ 
+    required_error: "المبلغ مطلوب",
+    invalid_type_error: "المبلغ يجب أن يكون رقماً" 
+  }).positive("يجب أن يكون المبلغ أكبر من صفر"),
+  category: z.string().min(1, "التصنيف مطلوب").trim(),
+  description: z.string().optional().transform(v => v?.trim() || ""),
 });
 
 app.get('/summary', orgMiddleware, async (c) => {
@@ -73,7 +78,10 @@ app.post('/logs', orgMiddleware, async (c) => {
 
   const body = await c.req.json();
   const validation = logSchema.safeParse(body);
-  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+  if (!validation.success) {
+    const errorMsg = validation.error.errors[0]?.message || "بيانات غير صالحة";
+    return c.json({ error: errorMsg }, 400);
+  }
 
   const newLog = await db.transaction(async (tx) => {
     const log = await tx.insert(financeLogs).values({
@@ -108,7 +116,10 @@ app.patch('/logs/:id', orgMiddleware, async (c) => {
 
   const body = await c.req.json();
   const validation = logSchema.partial().safeParse(body);
-  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+  if (!validation.success) {
+    const errorMsg = validation.error.errors[0]?.message || "بيانات غير صالحة";
+    return c.json({ error: errorMsg }, 400);
+  }
 
   const updated = await db.transaction(async (tx) => {
     const log = await tx.update(financeLogs)
