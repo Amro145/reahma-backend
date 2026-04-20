@@ -14,9 +14,9 @@ const logSchema = z.object({
   type: z.enum(['income', 'expense'], {
     errorMap: () => ({ message: "نوع المعاملة يجب أن يكون إما إيراد أو مصروف" })
   }),
-  amount: z.number({ 
+  amount: z.number({
     required_error: "المبلغ مطلوب",
-    invalid_type_error: "المبلغ يجب أن يكون رقماً" 
+    invalid_type_error: "المبلغ يجب أن يكون رقماً"
   }).positive("يجب أن يكون المبلغ أكبر من صفر"),
   category: z.string().min(1, "التصنيف مطلوب").trim(),
   description: z.string().optional().transform(v => v?.trim() || ""),
@@ -40,7 +40,7 @@ app.get('/summary', orgMiddleware, async (c) => {
     .where(eq(financeLogs.organizationId, orgId))
     .groupBy(financeLogs.type)
     .all();
-  
+
   const totalIncome = totals.find(t => t.type === 'income')?.total || 0;
   const totalExpenses = totals.find(t => t.type === 'expense')?.total || 0;
 
@@ -57,7 +57,7 @@ app.get('/summary', orgMiddleware, async (c) => {
 app.get('/logs', orgMiddleware, async (c) => {
   const orgId = c.get('orgId');
   const db = getDb(c.env.rahma_db);
-  
+
   const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
   const offset = Number(c.req.query('offset')) || 0;
 
@@ -67,7 +67,7 @@ app.get('/logs', orgMiddleware, async (c) => {
     .orderBy(desc(financeLogs.createdAt))
     .limit(limit)
     .offset(offset);
-  
+
   return c.json({ logs: data });
 });
 
@@ -83,31 +83,30 @@ app.post('/logs', orgMiddleware, async (c) => {
     return c.json({ error: errorMsg }, 400);
   }
 
-  const newLog = await db.transaction(async (tx) => {
-    const log = await tx.insert(financeLogs).values({
-      ...validation.data,
+  // Sequential inserts — D1 does not support interactive transactions
+  const log = await db.insert(financeLogs).values({
+    ...validation.data,
+    organizationId: orgId,
+    createdAt: new Date(),
+  }).returning().get();
+
+  // Fire-and-forget audit log (non-critical, don't block response)
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
       organizationId: orgId,
+      userId,
+      action: 'CREATE_FINANCE_LOG',
+      details: JSON.stringify(log),
       createdAt: new Date(),
-    }).returning().get();
+    }).run().catch(err => console.error('[AuditLog] CREATE_FINANCE_LOG failed:', err))
+  );
 
-    if (log) {
-      await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
-        action: 'CREATE_FINANCE_LOG',
-        details: JSON.stringify(log),
-        createdAt: new Date(),
-      }).run();
-    }
-    return log;
-  });
-
-  return c.json({ log: newLog });
+  return c.json({ log });
 });
 
 app.patch('/logs/:id', orgMiddleware, async (c) => {
   const parsedId = logIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: "Invalid log ID" }, 400);
+  if (!parsedId.success) return c.json({ error: "معرّف السجل غير صالح" }, 400);
   const logId = parsedId.data;
 
   const orgId = c.get('orgId');
@@ -121,59 +120,59 @@ app.patch('/logs/:id', orgMiddleware, async (c) => {
     return c.json({ error: errorMsg }, 400);
   }
 
-  const updated = await db.transaction(async (tx) => {
-    const log = await tx.update(financeLogs)
-      .set(validation.data)
-      .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
-      .returning().get();
+  // Sequential update — no transaction needed
+  const log = await db.update(financeLogs)
+    .set(validation.data)
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
+    .returning()
+    .get();
 
-    if (log) {
-      await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
-        action: 'UPDATE_FINANCE_LOG',
-        details: JSON.stringify({ logId, changes: validation.data }),
-        createdAt: new Date(),
-      }).run();
-    }
-    return log;
-  });
+  if (!log) return c.json({ error: "السجل المالي غير موجود" }, 404);
 
-  if (!updated) return c.json({ error: "Finance log not found" }, 404);
+  // Fire-and-forget audit log
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
+      organizationId: orgId,
+      userId,
+      action: 'UPDATE_FINANCE_LOG',
+      details: JSON.stringify({ logId, changes: validation.data }),
+      createdAt: new Date(),
+    }).run().catch(err => console.error('[AuditLog] UPDATE_FINANCE_LOG failed:', err))
+  );
 
-  return c.json({ log: updated });
+  return c.json({ log });
 });
 
 app.delete('/logs/:id', orgMiddleware, async (c) => {
   const role = c.get('role');
-  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
+  if (role !== 'owner' && role !== 'admin') return c.json({ error: "غير مصرح لك بهذا الإجراء" }, 403);
 
   const parsedId = logIdParam.safeParse(c.req.param('id'));
-  if (!parsedId.success) return c.json({ error: "Invalid log ID" }, 400);
+  if (!parsedId.success) return c.json({ error: "معرّف السجل غير صالح" }, 400);
   const logId = parsedId.data;
 
   const orgId = c.get('orgId');
   const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
 
-  const deleted = await db.transaction(async (tx) => {
-    const log = await tx.delete(financeLogs)
-      .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
-      .returning().get();
+  // Sequential delete — no transaction needed
+  const log = await db.delete(financeLogs)
+    .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
+    .returning()
+    .get();
 
-    if (log) {
-      await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
-        action: 'DELETE_FINANCE_LOG',
-        details: JSON.stringify({ logId, amount: log.amount, type: log.type }),
-        createdAt: new Date(),
-      }).run();
-    }
-    return log;
-  });
+  if (!log) return c.json({ error: "السجل المالي غير موجود" }, 404);
 
-  if (!deleted) return c.json({ error: "Finance log not found" }, 404);
+  // Fire-and-forget audit log
+  c.executionCtx.waitUntil(
+    db.insert(auditLogs).values({
+      organizationId: orgId,
+      userId,
+      action: 'DELETE_FINANCE_LOG',
+      details: JSON.stringify({ logId, amount: log.amount, type: log.type }),
+      createdAt: new Date(),
+    }).run().catch(err => console.error('[AuditLog] DELETE_FINANCE_LOG failed:', err))
+  );
 
   return c.json({ success: true });
 });
