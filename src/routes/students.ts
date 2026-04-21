@@ -1,14 +1,30 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../db/index';
-import { students, auditLogs, studentSubscriptions, financeLogs } from '../db/schema';
+import { students, auditLogs, studentSubscriptions, financeLogs, user } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { orgMiddleware } from '../middlewares/org-middleware';
 import { Bindings, Variables } from '../types';
+import { initAuth } from '../lib/auth';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+const registrationSchema = z.object({
+  email: z.string().email("البريد الإلكتروني غير صالح").optional(),
+  password: z.string().min(8, "كلمة المرور يجب أن تكون 8 أحرف على الأقل").optional(),
+  name: z.string().min(2, "الاسم مطلوب"),
+  whatsapp: z.string().min(8, "رقم الواتساب مطلوب"),
+  requiredAmount: z.number().positive("المبلغ يجب أن يكون أكبر من صفر"),
+});
+
+const profileUpdateSchema = z.object({
+  name: z.string().min(2).optional(),
+  whatsapp: z.string().min(8).optional(),
+  requiredAmount: z.number().positive().optional(),
+});
+
 const studentSchema = z.object({
+  userId: z.string({ required_error: "معرّف المستخدم مطلوب" }),
   name: z.string()
     .min(2, "اسم الطالب يجب أن يكون حرفين على الأقل")
     .max(100, "اسم الطالب طويل جداً (الحد الأقصى 100 حرف)"),
@@ -96,10 +112,13 @@ app.post('/', orgMiddleware, async (c) => {
   }
 
   const newStudent = await db.insert(students).values({
-    ...validation.data,
+    userId: validation.data.userId,
+    name: validation.data.name,
+    whatsapp: validation.data.whatsapp,
+    requiredAmount: validation.data.requiredAmount,
     organizationId: orgId,
     createdAt: new Date(),
-  }).returning().get();
+  } as any).returning().get();
 
   c.executionCtx.waitUntil(
     db.insert(auditLogs).values({
@@ -299,6 +318,116 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
   );
 
   return c.json({ subscription });
+});
+
+// --- Student Auth & Profile Management --- //
+
+app.post('/register', async (c) => {
+  const db = getDb(c.env.rahma_db);
+  const auth = initAuth(c.env);
+  
+  // Check for existing session first (Step 1 of 2-step signup)
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+  });
+
+  const body = await c.req.json().catch(() => ({}));
+  const validation = registrationSchema.safeParse(body);
+  if (!validation.success) {
+    return c.json({ error: validation.error.errors[0].message }, 400);
+  }
+
+  const { email, password, name, whatsapp, requiredAmount } = validation.data;
+  let userId: string;
+
+  if (session?.user) {
+    userId = session.user.id;
+  } else {
+    // If no session, we need email and password to create the user
+    if (!email || !password) {
+      return c.json({ error: "البريد الإلكتروني وكلمة المرور مطلوبان لإنشاء حساب جديد" }, 400);
+    }
+    
+    // 1. Create Better Auth user
+    const signUpResponse = await auth.api.signUpEmail({
+      body: {
+        email,
+        password,
+        name,
+      }
+    });
+
+    if (!signUpResponse || !signUpResponse.user) {
+      return c.json({ error: "فشل إنشاء حساب المستخدم" }, 500);
+    }
+    userId = signUpResponse.user.id;
+  }
+
+  // 2. Insert into students table
+  const newStudent = await db.insert(students).values({
+    userId,
+    organizationId: 'org_hq_001',
+    name,
+    whatsapp,
+    requiredAmount,
+    createdAt: new Date(),
+  }).returning().get();
+
+  return c.json({ 
+    student: newStudent, 
+    user: session?.user || {
+      id: userId,
+      email: email,
+    }
+  });
+});
+
+app.get('/me', async (c) => {
+  const auth = initAuth(c.env);
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+  });
+
+  if (!session || !session.user) {
+    return c.json({ error: "غير مصرح لك بالوصول" }, 401);
+  }
+
+  const db = getDb(c.env.rahma_db);
+  const student = await db.select().from(students)
+    .where(eq(students.userId, session.user.id))
+    .get();
+
+  if (!student) return c.json({ error: "لم يتم العثور على بيانات الطالب" }, 404);
+
+  return c.json({ student });
+});
+
+app.patch('/me', async (c) => {
+  const auth = initAuth(c.env);
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+  });
+
+  if (!session || !session.user) {
+    return c.json({ error: "غير مصرح لك بالوصول" }, 401);
+  }
+
+  const db = getDb(c.env.rahma_db);
+  const body = await c.req.json().catch(() => ({}));
+  
+  const validation = profileUpdateSchema.safeParse(body);
+  if (!validation.success) {
+    return c.json({ error: validation.error.errors[0].message }, 400);
+  }
+
+  const updated = await db.update(students)
+    .set(validation.data)
+    .where(eq(students.userId, session.user.id))
+    .returning().get();
+
+  if (!updated) return c.json({ error: "فشل تحديث البيانات أو أنك لا تملك صلاحية التعديل" }, 404);
+
+  return c.json({ student: updated });
 });
 
 export default app;

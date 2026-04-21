@@ -83,6 +83,7 @@ export const invitation = sqliteTable("invitation", {
 export const students = sqliteTable("students", {
     id: integer("id").primaryKey({ autoIncrement: true }),
     organizationId: text("organizationId").notNull().references(() => organization.id),
+    userId: text("userId").notNull().references(() => user.id).unique(),
     name: text("name").notNull(),
     whatsapp: text("whatsapp"),
     requiredAmount: real("requiredAmount").notNull(),

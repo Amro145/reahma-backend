@@ -25,6 +25,9 @@ export const initAuth = (env: Env) => betterAuth({
             clientSecret: env.GOOGLE_CLIENT_SECRET,
         },
     },
+    emailAndPassword: {
+        enabled: true
+    },
     plugins: [
         organization()
     ],
