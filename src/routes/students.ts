@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../db/index';
-import { students, auditLogs, studentSubscriptions, financeLogs, user } from '../db/schema';
+import { students, auditLogs, studentSubscriptions, financeLogs, user, member } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { orgMiddleware } from '../middlewares/org-middleware';
 import { Bindings, Variables } from '../types';
@@ -362,14 +362,26 @@ app.post('/register', async (c) => {
     }
 
     // Step 2: Insert into the students table, linked to our default org
-    const newStudent = await db.insert(students).values({
+    const studentData = {
       userId,
       organizationId: 'org_hq_001',
       name,
       whatsapp,
       requiredAmount,
       createdAt: new Date(),
-    } as any).returning().get();
+    };
+    
+    const newStudent = await db.insert(students).values(studentData as any).returning().get();
+
+    // Step 3: Automatically add user to organization members table
+    // This ensures they have a valid membership for orgMiddleware and session context
+    await db.insert(member).values({
+      id: `mem_std_${crypto.randomUUID()}`,
+      organizationId: 'org_hq_001',
+      userId,
+      role: 'student', // Mapping the global student role to the organization membership role
+      createdAt: new Date(),
+    }).run().catch(err => console.error('[Registration] Failed to add member record:', err));
 
     return c.json({
       student: newStudent,
