@@ -29,6 +29,13 @@
       "when": 1776627409920,
       "tag": "0003_clever_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1776788713103,
+      "tag": "0004_overrated_legion",
+      "breakpoints": true
     }
   ]
 }
