@@ -28,6 +28,15 @@ export const initAuth = (env: Env) => betterAuth({
     emailAndPassword: {
         enabled: true
     },
+    user: {
+        additionalFields: {
+            role: {
+                type: "string",
+                defaultValue: "student",
+                required: false,
+            },
+        },
+    },
     plugins: [
         organization()
     ],

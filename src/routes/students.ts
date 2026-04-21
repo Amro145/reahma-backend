@@ -323,63 +323,67 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
 // --- Student Auth & Profile Management --- //
 
 app.post('/register', async (c) => {
-  const db = getDb(c.env.rahma_db);
-  const auth = initAuth(c.env);
-  
-  // Check for existing session first (Step 1 of 2-step signup)
-  const session = await auth.api.getSession({
-    headers: c.req.raw.headers,
-  });
+  try {
+    const db = getDb(c.env.rahma_db);
+    const auth = initAuth(c.env);
 
-  const body = await c.req.json().catch(() => ({}));
-  const validation = registrationSchema.safeParse(body);
-  if (!validation.success) {
-    return c.json({ error: validation.error.errors[0].message }, 400);
-  }
-
-  const { email, password, name, whatsapp, requiredAmount } = validation.data;
-  let userId: string;
-
-  if (session?.user) {
-    userId = session.user.id;
-  } else {
-    // If no session, we need email and password to create the user
-    if (!email || !password) {
-      return c.json({ error: "البريد الإلكتروني وكلمة المرور مطلوبان لإنشاء حساب جديد" }, 400);
-    }
-    
-    // 1. Create Better Auth user
-    const signUpResponse = await auth.api.signUpEmail({
-      body: {
-        email,
-        password,
-        name,
-      }
+    // Check for an existing session (supports 2-step signup flows)
+    const session = await auth.api.getSession({
+      headers: c.req.raw.headers,
     });
 
-    if (!signUpResponse || !signUpResponse.user) {
-      return c.json({ error: "فشل إنشاء حساب المستخدم" }, 500);
+    const body = await c.req.json().catch(() => ({}));
+    const validation = registrationSchema.safeParse(body);
+    if (!validation.success) {
+      return c.json({ error: validation.error.errors[0].message }, 400);
     }
-    userId = signUpResponse.user.id;
+
+    const { email, password, name, whatsapp, requiredAmount } = validation.data;
+    let userId: string;
+
+    if (session?.user) {
+      // --- Path A: User is already authenticated (e.g. via Google) ---
+      userId = session.user.id;
+    } else {
+      // --- Path B: New user signup with email + password ---
+      if (!email || !password) {
+        return c.json({ error: "البريد الإلكتروني وكلمة المرور مطلوبان لإنشاء حساب جديد" }, 400);
+      }
+
+      // Step 1: Create it in Better Auth (handles hashing, session, etc.)
+      const signUpResponse = await auth.api.signUpEmail({
+        body: { email, password, name },
+      });
+
+      if (!signUpResponse?.user) {
+        return c.json({ error: "فشل إنشاء حساب المستخدم" }, 500);
+      }
+      userId = signUpResponse.user.id;
+    }
+
+    // Step 2: Insert into the students table, linked to our default org
+    const newStudent = await db.insert(students).values({
+      userId,
+      organizationId: 'org_hq_001',
+      name,
+      whatsapp,
+      requiredAmount,
+      createdAt: new Date(),
+    } as any).returning().get();
+
+    return c.json({
+      student: newStudent,
+      user: session?.user || { id: userId, email },
+    });
+  } catch (err: any) {
+    // Handle duplicate email (SQLite UNIQUE constraint) and other DB errors
+    const message: string = err?.message ?? '';
+    if (message.includes('UNIQUE') || message.includes('unique') || message.includes('already exists')) {
+      return c.json({ error: "هذا البريد الإلكتروني مسجل بالفعل" }, 409);
+    }
+    console.error('[/register] Unexpected error:', err);
+    return c.json({ error: "حدث خطأ غير متوقع أثناء التسجيل" }, 500);
   }
-
-  // 2. Insert into students table
-  const newStudent = await db.insert(students).values({
-    userId,
-    organizationId: 'org_hq_001',
-    name,
-    whatsapp,
-    requiredAmount,
-    createdAt: new Date(),
-  }).returning().get();
-
-  return c.json({ 
-    student: newStudent, 
-    user: session?.user || {
-      id: userId,
-      email: email,
-    }
-  });
 });
 
 app.get('/me', async (c) => {

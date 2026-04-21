@@ -10,6 +10,8 @@ export const user = sqliteTable("user", {
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
     platform: text("platform"), // المنصة
+    // Role for RBAC — managed by Better Auth additionalFields
+    role: text("role", { enum: ["admin", "student"] }).default("student").notNull(),
 });
 
 export const session = sqliteTable("session", {
