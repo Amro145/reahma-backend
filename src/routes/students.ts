@@ -15,6 +15,7 @@ const registrationSchema = z.object({
   name: z.string().min(2, "الاسم مطلوب"),
   whatsapp: z.string().min(8, "رقم الواتساب مطلوب"),
   requiredAmount: z.number().positive("المبلغ يجب أن يكون أكبر من صفر"),
+  organizationId: z.string().optional().nullable(),
 });
 
 const profileUpdateSchema = z.object({
@@ -38,6 +39,7 @@ const studentSchema = z.object({
   })
     .positive("يجب أن يكون المبلغ أكبر من صفر")
     .max(10000000, "المبلغ المدخل كبير جداً"),
+  organizationId: z.string().optional().nullable(),
 });
 
 const paymentSchema = z.object({
@@ -338,7 +340,7 @@ app.post('/register', async (c) => {
       return c.json({ error: validation.error.errors[0].message }, 400);
     }
 
-    const { email, password, name, whatsapp, requiredAmount } = validation.data;
+    const { email, password, name, whatsapp, requiredAmount, organizationId } = validation.data;
     let userId: string;
 
     if (session?.user) {
@@ -361,10 +363,10 @@ app.post('/register', async (c) => {
       userId = signUpResponse.user.id;
     }
 
-    // Step 2: Insert into the students table, linked to our default org
+    // Step 2: Insert into the students table
     const studentData = {
       userId,
-      organizationId: 'org_hq_001',
+      organizationId: organizationId || null,
       name,
       whatsapp,
       requiredAmount,
@@ -373,15 +375,16 @@ app.post('/register', async (c) => {
     
     const newStudent = await db.insert(students).values(studentData as any).returning().get();
 
-    // Step 3: Automatically add user to organization members table
-    // This ensures they have a valid membership for orgMiddleware and session context
-    await db.insert(member).values({
-      id: `mem_std_${crypto.randomUUID()}`,
-      organizationId: 'org_hq_001',
-      userId,
-      role: 'student', // Mapping the global student role to the organization membership role
-      createdAt: new Date(),
-    }).run().catch(err => console.error('[Registration] Failed to add member record:', err));
+    // Step 3: Automatically add user to organization members table IF organizationId is provided
+    if (organizationId) {
+      await db.insert(member).values({
+        id: `mem_std_${crypto.randomUUID()}`,
+        organizationId,
+        userId,
+        role: 'student', 
+        createdAt: new Date(),
+      }).run().catch(err => console.error('[Registration] Failed to add member record:', err));
+    }
 
     return c.json({
       student: newStudent,
@@ -444,6 +447,59 @@ app.patch('/me', async (c) => {
   if (!updated) return c.json({ error: "فشل تحديث البيانات أو أنك لا تملك صلاحية التعديل" }, 404);
 
   return c.json({ student: updated });
+});
+
+app.get('/me/payment-status', async (c) => {
+  const auth = initAuth(c.env);
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+  });
+
+  if (!session || !session.user) {
+    return c.json({ error: "غير مصرح لك بالوصول" }, 401);
+  }
+
+  const db = getDb(c.env.rahma_db);
+  const student = await db.select().from(students)
+    .where(eq(students.userId, session.user.id))
+    .get();
+
+  if (!student) return c.json({ error: "لم يتم العثور على بيانات الطالب" }, 404);
+
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+
+  const subscriptions = await db.select().from(studentSubscriptions)
+    .where(and(eq(studentSubscriptions.studentId, student.id), eq(studentSubscriptions.academicYear, currentYear)))
+    .all();
+
+  const paymentPlan = Array.from({ length: 12 }).map((_, idx) => {
+    const monthIndex = idx + 1;
+    const sub = subscriptions.find(s => s.monthIndex === monthIndex);
+    let status = "upcoming";
+    if (sub?.status === 'paid') {
+      status = "paid";
+    } else if (monthIndex <= currentMonth) {
+      status = "unpaid";
+    }
+    
+    return {
+      monthIndex,
+      status,
+      amount: student.requiredAmount,
+      label: `شهر ${monthIndex}`,
+    };
+  });
+
+  const unpaidMonths = paymentPlan.filter(p => p.status === 'unpaid').length;
+
+  return c.json({
+    studentId: student.id,
+    academicYear: currentYear,
+    paymentPlan,
+    totalBalanceDue: unpaidMonths * student.requiredAmount,
+    monthlyAmount: student.requiredAmount
+  });
 });
 
 export default app;

@@ -8,7 +8,9 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 app.post('/invite', orgMiddleware, async (c) => {
   const role = c.get('role');
-  if (role !== 'owner' && role !== 'admin') return c.json({ error: "غير مصرح لك بهذا الإجراء" }, 403);
+  if (role !== 'owner' && role !== 'admin') {
+    return c.json({ error: "غير مصرح لك بهذا الإجراء. هذه الصلاحية للمسؤولين فقط" }, 403);
+  }
 
   let body;
   try {
