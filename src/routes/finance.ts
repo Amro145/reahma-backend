@@ -126,23 +126,17 @@ app.delete('/logs/:id', authMiddleware, async (c) => {
 
   const db = getDb(c.env.rahma_db);
 
-  const deleted = await db.transaction(async (tx) => {
-    const log = await tx.delete(financeLogs)
-      .where(eq(financeLogs.id, logId))
-      .returning().get();
+  const log = await db.select().from(financeLogs).where(eq(financeLogs.id, logId)).get();
+  if (!log) return c.json({ error: "Finance log not found" }, 404);
 
-    if (log) {
-      await tx.insert(auditLogs).values({
-        userId: user.id,
-        action: 'DELETE_FINANCE_LOG',
-        details: JSON.stringify({ logId, amount: log.amount, type: log.type }),
-        createdAt: new Date(),
-      }).run();
-    }
-    return log;
-  });
+  await db.insert(auditLogs).values({
+    userId: user.id,
+    action: 'DELETE_FINANCE_LOG',
+    details: JSON.stringify({ logId, amount: log.amount, type: log.type }),
+    createdAt: new Date(),
+  }).run();
 
-  if (!deleted) return c.json({ error: "Finance log not found" }, 404);
+  await db.delete(financeLogs).where(eq(financeLogs.id, logId)).run();
 
   return c.json({ success: true });
 });

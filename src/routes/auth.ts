@@ -62,6 +62,7 @@ app.post('/signup', async (c) => {
     id: userId,
     name,
     email,
+    emailVerified: false,
     password: hashedPassword,
     role: 'student',
     createdAt: now,
