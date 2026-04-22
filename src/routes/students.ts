@@ -38,6 +38,22 @@ app.get('/', authMiddleware, async (c) => {
   return c.json({ students: data });
 });
 
+app.get('/:id', authMiddleware, async (c) => {
+  const parsedId = studentIdParam.safeParse(c.req.param('id'));
+  if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
+  const studentId = parsedId.data;
+
+  const db = getDb(c.env.rahma_db);
+  
+  const student = await db.select().from(students)
+    .where(eq(students.id, studentId))
+    .get();
+  
+  if (!student) return c.json({ error: "Not found" }, 404);
+
+  return c.json({ student });
+});
+
 app.post('/', authMiddleware, async (c) => {
   const user = c.get('user');
   if (user.role !== 'admin') return c.json({ error: "Forbidden: Only admins can create students" }, 403);
