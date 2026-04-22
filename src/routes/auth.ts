@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { sign } from 'hono/jwt';
 import { z } from 'zod';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index';
 import { user, students } from '../db/schema';
 import { hashPassword, verifyPassword } from '../lib/auth-utils';
@@ -24,7 +25,11 @@ const loginSchema = z.object({
 });
 
 const generateToken = async (payload: { id: string; email: string; name: string; role: string }, secret: string) => {
-  return await sign(payload, secret, { expiresIn: '7d' });
+  return await sign(
+    { ...payload, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 },
+    secret,
+    'HS256',
+  );
 };
 
 app.post('/signup', async (c) => {
@@ -44,7 +49,7 @@ app.post('/signup', async (c) => {
 
   const { email, password, name, whatsapp, requiredAmount, faculty, semester } = validation.data;
 
-  const existingUser = await db.select().from(user).where(user.email.eq(email)).get();
+  const existingUser = await db.select().from(user).where(eq(user.email, email)).get();
   if (existingUser) {
     return c.json({ error: "Email already registered" }, 409);
   }
@@ -94,48 +99,53 @@ app.post('/signup', async (c) => {
 });
 
 app.post('/login', async (c) => {
-  const db = getDb(c.env.rahma_db);
-
-  let body;
   try {
-    body = await c.req.json();
-  } catch (err) {
-    return c.json({ error: "Invalid or missing JSON body" }, 400);
-  }
+    const db = getDb(c.env.rahma_db);
 
-  const validation = loginSchema.safeParse(body);
-  if (!validation.success) {
-    return c.json({ error: validation.error.format() }, 400);
-  }
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (err) {
+      return c.json({ error: "Invalid or missing JSON body" }, 400);
+    }
 
-  const { email, password } = validation.data;
+    const validation = loginSchema.safeParse(body);
+    if (!validation.success) {
+      return c.json({ error: validation.error.format() }, 400);
+    }
 
-  const existingUser = await db.select().from(user).where(user.email.eq(email)).get();
-  if (!existingUser) {
-    return c.json({ error: "Invalid email or password" }, 401);
-  }
+    const { email, password } = validation.data;
 
-  const isValidPassword = await verifyPassword(password, existingUser.password);
-  if (!isValidPassword) {
-    return c.json({ error: "Invalid email or password" }, 401);
-  }
+    const existingUser = await db.select().from(user).where(eq(user.email, email)).get();
+    if (!existingUser) {
+      return c.json({ error: "Invalid email or password" }, 401);
+    }
 
-  const token = await generateToken({
-    id: existingUser.id,
-    email: existingUser.email,
-    name: existingUser.name,
-    role: existingUser.role,
-  }, c.env.JWT_SECRET);
+    const isValidPassword = await verifyPassword(password, existingUser.password);
+    if (!isValidPassword) {
+      return c.json({ error: "Invalid email or password" }, 401);
+    }
 
-  return c.json({
-    token,
-    user: {
+    const token = await generateToken({
       id: existingUser.id,
       email: existingUser.email,
       name: existingUser.name,
       role: existingUser.role,
-    },
-  });
+    }, c.env.JWT_SECRET);
+
+    return c.json({
+      token,
+      user: {
+        id: existingUser.id,
+        email: existingUser.email,
+        name: existingUser.name,
+        role: existingUser.role,
+      },
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    return c.json({ error: "Internal server error", details: String(err) }, 500);
+  }
 });
 
 export default app;

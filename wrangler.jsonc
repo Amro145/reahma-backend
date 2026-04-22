@@ -6,21 +6,16 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
-	// "vars": {
-	//   "MY_VAR": "my-variable"
-	// },
+	"vars": {
+		"ALLOWED_ORIGINS": "https://client.amroaltayeb14.workers.dev,http://localhost:3000",
+		"JWT_SECRET": "super-secret-jwt-key-for-rahma-app-2024"
+	},
 	"kv_namespaces": [
 		{
 			"binding": "RATE_LIMITER",
 			"id": "0c3d2c843ea14bdbb4a429d332dfff62"
 		}
 	],
-	// "r2_buckets": [
-	//   {
-	//     "binding": "MY_BUCKET",
-	//     "bucket_name": "my-bucket"
-	//   }
-	// ],
 	"d1_databases": [
 		{
 			"binding": "rahma_db",
@@ -29,12 +24,5 @@
 			"remote": true,
 			"migrations_dir": "drizzle"
 		}
-	],
-	// "ai": {
-	//   "binding": "AI"
-	// },
-	// "observability": {
-	//   "enabled": true,
-	//   "head_sampling_rate": 1
-	// }
+	]
 }

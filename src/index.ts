@@ -11,7 +11,8 @@ import authRouter from './routes/auth';
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 app.use('*', (c, next) => {
-  const origins = c.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['http://localhost:3000'];
+  const originsStr = c.env.ALLOWED_ORIGINS || '';
+  const origins = originsStr ? originsStr.split(',').map(o => o.trim()) : ['http://localhost:3000'];
   
   return secureHeaders({
     contentSecurityPolicy: {
@@ -30,7 +31,8 @@ app.use('*', (c, next) => {
 
 app.use('/api/*', (c, next) => {
   const origin = c.req.header('Origin');
-  const allowedOrigins = c.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['http://localhost:3000'];
+  const originsStr = c.env.ALLOWED_ORIGINS || '';
+  const allowedOrigins = originsStr ? originsStr.split(',').map(o => o.trim()) : ['http://localhost:3000'];
   
   return cors({
     origin: (origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0],
@@ -69,5 +71,12 @@ app.use('/api/*', rateLimiterKV(2000, 60));
 app.route('/api/auth', authRouter);
 app.route('/api/students', studentsRouter);
 app.route('/api/finance', financeRouter);
+
+app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA Backend API' }));
+
+app.onError((err, c) => {
+  console.error('[Global Error]', err);
+  return c.json({ error: 'Internal Server Error', message: String(err) }, 500);
+});
 
 export default app;

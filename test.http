@@ -2,63 +2,139 @@
 
 @baseUrl = https://backend.amroaltayeb14.workers.dev
 @localUrl = http://localhost:8787
+@clientUrl = https://client.amroaltayeb14.workers.dev
 
-# 1. Health Check
+# ============================================================
+# AUTH TESTS
+# ============================================================
+
+# 1. Login with admin user
+# @name login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "amroaltayeb14@gmail.com",
+  "password": "amro123#$"
+}
+
+# Save token for subsequent requests
+@token = {{login.response.body.token}}
+
+# 2. Login with wrong password
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "amroaltayeb14@gmail.com",
+  "password": "wrongpassword"
+}
+
+# 3. Login with non-existent user
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "nonexistent@test.com",
+  "password": "password123"
+}
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+# 4. Health check
 GET {{baseUrl}}/
 Accept: application/json
 
-###
+# ============================================================
+# STUDENTS TESTS
+# ============================================================
 
-# 2. Add New Student (Requires Auth Cookies / Session)
-POST {{baseUrl}}/api/students
-Content-Type: application/json
-
-{
-    "name": "أحمد خليل",
-    "whatsapp": "+249123456789",
-    "requiredAmount": 50000
-}
-
-###
-
-# 3. Get All Students
+# 5. Get all students (unauthenticated - should fail)
 GET {{baseUrl}}/api/students
-Accept: application/json
 
-###
+# 6. Get all students (with auth)
+GET {{baseUrl}}/api/students
+Authorization: Bearer {{token}}
 
-# 4. Mark Student as Paid (Replace 1 with student id)
-PATCH {{baseUrl}}/api/students/1/pay
-Content-Type: application/json
+# 7. Get student by ID
+GET {{baseUrl}}/api/students/55
+Authorization: Bearer {{token}}
 
-###
+# 8. Get payment status for student
+GET {{baseUrl}}/api/students/55/payment-status?year=2026
+Authorization: Bearer {{token}}
 
-# 5. Add a Finance Log (Income)
-POST {{baseUrl}}/api/finance/logs
-Content-Type: application/json
-
-{
-    "type": "income",
-    "amount": 20000,
-    "category": "تبرع عام",
-    "description": "تبرع من فاعل خير"
-}
-
-###
-
-# 6. Add a Finance Log (Expense)
-POST {{baseUrl}}/api/finance/logs
+# 9. Create new student
+POST {{baseUrl}}/api/students
+Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-    "type": "expense",
-    "amount": 5000,
-    "category": "إيجار",
-    "description": "إيجار شهر سبتمبر"
+  "userId": "user_new_001",
+  "name": "طالب جديد",
+  "whatsapp": "+249999999999",
+  "requiredAmount": 5000,
+  "faculty": "engineering",
+  "semester": "1"
 }
 
-###
+# 10. Update student
+PATCH {{baseUrl}}/api/students/55
+Authorization: Bearer {{token}}
+Content-Type: application/json
 
-# 7. Get Finance Summary
+{
+  "requiredAmount": 6500
+}
+
+# 11. Delete student (be careful!)
+DELETE {{baseUrl}}/api/students/100
+Authorization: Bearer {{token}}
+
+# ============================================================
+# FINANCE TESTS
+# ============================================================
+
+# 12. Get finance summary
 GET {{baseUrl}}/api/finance/summary
-Accept: application/json
+Authorization: Bearer {{token}}
+
+# 13. Get finance logs
+GET {{baseUrl}}/api/finance/logs
+Authorization: Bearer {{token}}
+
+# 14. Add income
+POST {{baseUrl}}/api/finance/logs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": "income",
+  "amount": 5000,
+  "category": "رسوم دراسية",
+  "description": "تحصيل شهر يناير"
+}
+
+# 15. Add expense
+POST {{baseUrl}}/api/finance/logs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "type": "expense",
+  "amount": 1000,
+  "category": "فواتير",
+  "description": "فاتورة كهرباء"
+}
+
+# ============================================================
+# CORS TESTS
+# ============================================================
+
+# 16. Check CORS headers
+OPTIONS {{baseUrl}}/api/auth/login
+Origin: {{clientUrl}}
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type
