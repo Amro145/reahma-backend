@@ -62,22 +62,18 @@ app.post('/logs', authMiddleware, async (c) => {
   const validation = logSchema.safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
-  const newLog = await db.transaction(async (tx) => {
-    const log = await tx.insert(financeLogs).values({
-      ...validation.data,
-      createdAt: new Date(),
-    }).returning().get();
+  const newLog = await db.insert(financeLogs).values({
+    ...validation.data,
+    createdAt: new Date(),
+  }).returning().get();
 
-    if (log) {
-      await tx.insert(auditLogs).values({
-        userId: user.id,
-        action: 'CREATE_FINANCE_LOG',
-        details: JSON.stringify(log),
-        createdAt: new Date(),
-      }).run();
-    }
-    return log;
-  });
+  // Audit log is best-effort — don't let it block the response
+  db.insert(auditLogs).values({
+    userId: user.id,
+    action: 'CREATE_FINANCE_LOG',
+    details: JSON.stringify(newLog),
+    createdAt: new Date(),
+  }).run().catch(console.error);
 
   return c.json({ log: newLog });
 });
@@ -94,24 +90,19 @@ app.patch('/logs/:id', authMiddleware, async (c) => {
   const validation = logSchema.partial().safeParse(body);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
-  const updated = await db.transaction(async (tx) => {
-    const log = await tx.update(financeLogs)
-      .set(validation.data)
-      .where(eq(financeLogs.id, logId))
-      .returning().get();
-
-    if (log) {
-      await tx.insert(auditLogs).values({
-        userId: user.id,
-        action: 'UPDATE_FINANCE_LOG',
-        details: JSON.stringify({ logId, changes: validation.data }),
-        createdAt: new Date(),
-      }).run();
-    }
-    return log;
-  });
+  const updated = await db.update(financeLogs)
+    .set(validation.data)
+    .where(eq(financeLogs.id, logId))
+    .returning().get();
 
   if (!updated) return c.json({ error: "Finance log not found" }, 404);
+
+  db.insert(auditLogs).values({
+    userId: user.id,
+    action: 'UPDATE_FINANCE_LOG',
+    details: JSON.stringify({ logId, changes: validation.data }),
+    createdAt: new Date(),
+  }).run().catch(console.error);
 
   return c.json({ log: updated });
 });
