@@ -4,13 +4,15 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "better-auth": "^1.6.5",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.14",
+    "hono/jwt": "^4.12.14",
     "zod": "^3.23.8"
   },
   "devDependencies": {

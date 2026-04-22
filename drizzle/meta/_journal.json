@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1776623213962,
-      "tag": "0000_common_white_queen",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1776626082258,
-      "tag": "0001_demonic_shinobi_shaw",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1776626341884,
-      "tag": "0002_woozy_yellow_claw",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1776627409920,
-      "tag": "0003_clever_hex",
+      "when": 1776825661056,
+      "tag": "0000_flimsy_captain_america",
       "breakpoints": true
     }
   ]

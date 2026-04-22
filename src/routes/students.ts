@@ -3,15 +3,17 @@ import { z } from 'zod';
 import { getDb } from '../db/index';
 import { students, auditLogs, studentSubscriptions, financeLogs } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
-import { orgMiddleware } from '../middlewares/org-middleware';
+import { authMiddleware } from '../middlewares/auth-middleware';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const studentSchema = z.object({
   name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^[\d\s+\-()]+$/).min(8).max(25), // More flexible for international formats
+  whatsapp: z.string().regex(/^[\d\s+\-()]+$/).min(8).max(25).optional(),
   requiredAmount: z.number().positive().max(10000000),
+  faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
+  semester: z.enum(['1', '2', '3', '4', '5', '6']),
 });
 
 const paymentSchema = z.object({
@@ -22,24 +24,22 @@ const paymentSchema = z.object({
 
 const studentIdParam = z.string().regex(/^\d+$/).transform(Number);
 
-app.get('/', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
+app.get('/', authMiddleware, async (c) => {
+  const user = c.get('user');
   const db = getDb(c.env.rahma_db);
   
   const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
   const offset = Number(c.req.query('offset')) || 0;
 
   const data = await db.select().from(students)
-    .where(eq(students.organizationId, orgId))
     .limit(limit)
     .offset(offset);
     
   return c.json({ students: data });
 });
 
-app.post('/', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
+app.post('/', authMiddleware, async (c) => {
+  const user = c.get('user');
   const db = getDb(c.env.rahma_db);
   
   let body;
@@ -58,14 +58,13 @@ app.post('/', orgMiddleware, async (c) => {
 
   const newStudent = await db.insert(students).values({
     ...validation.data,
-    organizationId: orgId,
+    userId: user.id,
     createdAt: new Date(),
   }).returning().get();
 
   if (newStudent) {
     await db.insert(auditLogs).values({
-      organizationId: orgId,
-      userId,
+      userId: user.id,
       action: 'CREATE_STUDENT',
       details: JSON.stringify(newStudent),
       createdAt: new Date(),
@@ -75,13 +74,12 @@ app.post('/', orgMiddleware, async (c) => {
   return c.json({ student: newStudent });
 });
 
-app.patch('/:id', orgMiddleware, async (c) => {
+app.patch('/:id', authMiddleware, async (c) => {
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
   const studentId = parsedId.data;
 
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
+  const user = c.get('user');
   const db = getDb(c.env.rahma_db);
 
   const body = await c.req.json();
@@ -90,13 +88,12 @@ app.patch('/:id', orgMiddleware, async (c) => {
 
   const updated = await db.update(students)
     .set(validation.data)
-    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .where(eq(students.id, studentId))
     .returning().get();
 
   if (updated) {
     await db.insert(auditLogs).values({
-      organizationId: orgId,
-      userId,
+      userId: user.id,
       action: 'UPDATE_STUDENT',
       details: JSON.stringify({ studentId, changes: validation.data }),
       createdAt: new Date(),
@@ -108,26 +105,23 @@ app.patch('/:id', orgMiddleware, async (c) => {
   return c.json({ student: updated });
 });
 
-app.delete('/:id', orgMiddleware, async (c) => {
-  const role = c.get('role');
-  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
+app.delete('/:id', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin') return c.json({ error: "Forbidden" }, 403);
 
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
   const studentId = parsedId.data;
 
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
 
   const deleted = await db.delete(students)
-    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .where(eq(students.id, studentId))
     .returning().get();
 
   if (deleted) {
     await db.insert(auditLogs).values({
-      organizationId: orgId,
-      userId,
+      userId: user.id,
       action: 'DELETE_STUDENT',
       details: JSON.stringify({ studentId, name: deleted.name }),
       createdAt: new Date(),
@@ -141,8 +135,7 @@ app.delete('/:id', orgMiddleware, async (c) => {
 
 // --- Advanced Payment Tracking --- //
 
-app.get('/:id/payment-status', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
+app.get('/:id/payment-status', authMiddleware, async (c) => {
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
   const studentId = parsedId.data;
@@ -150,7 +143,7 @@ app.get('/:id/payment-status', orgMiddleware, async (c) => {
   const db = getDb(c.env.rahma_db);
   
   const student = await db.select().from(students)
-    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId))).get();
+    .where(eq(students.id, studentId)).get();
   
   if (!student) return c.json({ error: "Not found" }, 404);
 
@@ -192,9 +185,8 @@ app.get('/:id/payment-status', orgMiddleware, async (c) => {
   });
 });
 
-app.patch('/:id/pay', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
+app.patch('/:id/pay', authMiddleware, async (c) => {
+  const user = c.get('user');
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
   const studentId = parsedId.data;
@@ -218,14 +210,13 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
   const { monthIndex, academicYear, amount } = validation.data;
   console.log(`[Payment] Attempting payment for student ${studentId}, month ${monthIndex}, year ${academicYear}, amount ${amount}`);
 
-  // Security Check: Verify student ownership before payment
   const student = await db.select().from(students)
-    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .where(eq(students.id, studentId))
     .get();
 
   if (!student) {
-    console.warn(`[Payment] Student ${studentId} not found in org ${orgId}`);
-    return c.json({ error: "Student not found in this organization" }, 404);
+    console.warn(`[Payment] Student ${studentId} not found`);
+    return c.json({ error: "Student not found" }, 404);
   }
 
   const subscription = await db.insert(studentSubscriptions).values({
@@ -243,7 +234,6 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
   console.log(`[Payment] Inserted/Updated subscription for student ${studentId}. Result:`, subscription);
   
   const newLog = await db.insert(financeLogs).values({
-    organizationId: orgId,
     type: 'income',
     amount,
     category: 'رسوم دراسية',
@@ -254,18 +244,15 @@ app.patch('/:id/pay', orgMiddleware, async (c) => {
   console.log(`[Payment] Created finance log ${newLog?.id} for student ${studentId}`);
 
   await db.insert(auditLogs).values({
-    organizationId: orgId,
-    userId,
+    userId: user.id,
     action: 'PAY_STUDENT_SUBSCRIPTIONS',
     details: JSON.stringify({ studentId, monthIndex, logId: newLog?.id }),
     createdAt: new Date(),
   }).run();
 
-  // Update the legacy status field on the student record to reflect that they have paid something
-  // This is used for the main students list view.
   await db.update(students)
     .set({ status: 'paid' })
-    .where(and(eq(students.id, studentId), eq(students.organizationId, orgId)))
+    .where(eq(students.id, studentId))
     .run();
   
   console.log(`[Payment] Success for student ${studentId}, month ${monthIndex}`);

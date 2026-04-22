@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../db/index';
 import { financeLogs, auditLogs, students } from '../db/schema';
-import { eq, and, desc, sql } from 'drizzle-orm';
-import { orgMiddleware } from '../middlewares/org-middleware';
+import { eq, desc, sql } from 'drizzle-orm';
+import { authMiddleware } from '../middlewares/auth-middleware';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -17,22 +17,17 @@ const logSchema = z.object({
   description: z.string().optional(),
 });
 
-app.get('/summary', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
+app.get('/summary', authMiddleware, async (c) => {
   const db = getDb(c.env.rahma_db);
 
-  // Total Students
   const studentsCount = await db.select({ count: sql<number>`count(*)` })
     .from(students)
-    .where(eq(students.organizationId, orgId))
     .get();
 
-  // Optimized Financial Totals using SQL SUM
   const totals = await db.select({
     type: financeLogs.type,
     total: sql<number>`sum(${financeLogs.amount})`
   }).from(financeLogs)
-    .where(eq(financeLogs.organizationId, orgId))
     .groupBy(financeLogs.type)
     .all();
   
@@ -49,21 +44,18 @@ app.get('/summary', orgMiddleware, async (c) => {
   });
 });
 
-app.get('/logs', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
+app.get('/logs', authMiddleware, async (c) => {
   const db = getDb(c.env.rahma_db);
   const data = await db.select()
     .from(financeLogs)
-    .where(eq(financeLogs.organizationId, orgId))
     .orderBy(desc(financeLogs.createdAt))
-    .limit(100); // Pagination limit added
+    .limit(100);
   
   return c.json({ logs: data });
 });
 
-app.post('/logs', orgMiddleware, async (c) => {
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
+app.post('/logs', authMiddleware, async (c) => {
+  const user = c.get('user');
   const db = getDb(c.env.rahma_db);
 
   const body = await c.req.json();
@@ -73,14 +65,12 @@ app.post('/logs', orgMiddleware, async (c) => {
   const newLog = await db.transaction(async (tx) => {
     const log = await tx.insert(financeLogs).values({
       ...validation.data,
-      organizationId: orgId,
       createdAt: new Date(),
     }).returning().get();
 
     if (log) {
       await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
+        userId: user.id,
         action: 'CREATE_FINANCE_LOG',
         details: JSON.stringify(log),
         createdAt: new Date(),
@@ -92,13 +82,12 @@ app.post('/logs', orgMiddleware, async (c) => {
   return c.json({ log: newLog });
 });
 
-app.patch('/logs/:id', orgMiddleware, async (c) => {
+app.patch('/logs/:id', authMiddleware, async (c) => {
   const parsedId = logIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid log ID" }, 400);
   const logId = parsedId.data;
 
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
+  const user = c.get('user');
   const db = getDb(c.env.rahma_db);
 
   const body = await c.req.json();
@@ -108,13 +97,12 @@ app.patch('/logs/:id', orgMiddleware, async (c) => {
   const updated = await db.transaction(async (tx) => {
     const log = await tx.update(financeLogs)
       .set(validation.data)
-      .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
+      .where(eq(financeLogs.id, logId))
       .returning().get();
 
     if (log) {
       await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
+        userId: user.id,
         action: 'UPDATE_FINANCE_LOG',
         details: JSON.stringify({ logId, changes: validation.data }),
         createdAt: new Date(),
@@ -128,27 +116,24 @@ app.patch('/logs/:id', orgMiddleware, async (c) => {
   return c.json({ log: updated });
 });
 
-app.delete('/logs/:id', orgMiddleware, async (c) => {
-  const role = c.get('role');
-  if (role !== 'owner' && role !== 'admin') return c.json({ error: "Forbidden" }, 403);
+app.delete('/logs/:id', authMiddleware, async (c) => {
+  const user = c.get('user');
+  if (user.role !== 'admin') return c.json({ error: "Forbidden" }, 403);
 
   const parsedId = logIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid log ID" }, 400);
   const logId = parsedId.data;
 
-  const orgId = c.get('orgId');
-  const userId = c.get('user').id;
   const db = getDb(c.env.rahma_db);
 
   const deleted = await db.transaction(async (tx) => {
     const log = await tx.delete(financeLogs)
-      .where(and(eq(financeLogs.id, logId), eq(financeLogs.organizationId, orgId)))
+      .where(eq(financeLogs.id, logId))
       .returning().get();
 
     if (log) {
       await tx.insert(auditLogs).values({
-        organizationId: orgId,
-        userId,
+        userId: user.id,
         action: 'DELETE_FINANCE_LOG',
         details: JSON.stringify({ logId, amount: log.amount, type: log.type }),
         createdAt: new Date(),

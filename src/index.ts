@@ -3,16 +3,12 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { createMiddleware } from 'hono/factory';
 import { Bindings, Variables } from './types';
-import { initAuth } from './lib/auth';
 
-// Import routers
 import studentsRouter from './routes/students';
 import financeRouter from './routes/finance';
-import organizationsRouter from './routes/organizations';
+import authRouter from './routes/auth';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-// --- Security Middlewares --- //
 
 app.use('*', (c, next) => {
   const origins = c.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['http://localhost:3000'];
@@ -38,7 +34,7 @@ app.use('/api/*', (c, next) => {
   
   return cors({
     origin: (origin && allowedOrigins.includes(origin)) ? origin : allowedOrigins[0],
-    allowHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-organization-id'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Accept'],
     allowMethods: ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
     exposeHeaders: ['Content-Length'],
     maxAge: 600,
@@ -50,7 +46,7 @@ const rateLimiterKV = (limit: number, windowSeconds: number) => {
   return createMiddleware<{ Bindings: Bindings }>(async (c, next) => {
     const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
     const pathPrefix = c.req.path.startsWith('/api/auth') ? 'auth' : 'api';
-    const key = `rl:${ip}:${pathPrefix}`; // Should be hashed natively, relying on cf-connecting-ip for now
+    const key = `rl:${ip}:${pathPrefix}`;
     const kv = c.env.RATE_LIMITER;
 
     if (!kv) return await next();
@@ -70,17 +66,8 @@ const rateLimiterKV = (limit: number, windowSeconds: number) => {
 app.use('/api/auth/*', rateLimiterKV(500, 60));
 app.use('/api/*', rateLimiterKV(2000, 60));
 
-// --- Auth Handler --- //
-
-app.on(["POST", "GET"], "/api/auth/*", (c) => {
-  const auth = initAuth(c.env);
-  return auth.handler(c.req.raw);
-});
-
-// --- Core Endpoints --- //
-
+app.route('/api/auth', authRouter);
 app.route('/api/students', studentsRouter);
 app.route('/api/finance', financeRouter);
-app.route('/api/organizations', organizationsRouter);
 
 export default app;
