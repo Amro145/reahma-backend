@@ -7,6 +7,7 @@ import { Bindings, Variables } from './types';
 import studentsRouter from './routes/students';
 import financeRouter from './routes/finance';
 import authRouter from './routes/auth';
+import meRouter from './routes/me';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -71,6 +72,7 @@ app.use('/api/*', rateLimiterKV(2000, 60));
 app.route('/api/auth', authRouter);
 app.route('/api/students', studentsRouter);
 app.route('/api/finance', financeRouter);
+app.route('/api/me', meRouter);
 
 app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA Backend API' }));
 
