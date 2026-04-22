@@ -12,6 +12,7 @@ export const user = sqliteTable("user", {
     updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
 });
 
+
 export const students = sqliteTable("students", {
     id: integer("id").primaryKey({ autoIncrement: true }),
     userId: text("userId").notNull().unique().references(() => user.id),
