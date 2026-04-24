@@ -13,7 +13,7 @@ const signupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6).max(100),
   name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^[\d\s+\-()]+$/).min(8).max(25).optional(),
+  whatsapp: z.string().regex(/^\+?\d+$/).min(8).max(25).optional(),
   requiredAmount: z.number().positive().max(10000000),
   faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
   semester: z.enum(['1', '2', '3', '4', '5', '6']),

@@ -10,7 +10,7 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const studentSchema = z.object({
   name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^[\d\s+\-()]+$/).min(8).max(25).optional(),
+  whatsapp: z.string().regex(/^\+?\d+$/).min(8).max(25).optional(),
   requiredAmount: z.number().positive().max(10000000),
   faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
   semester: z.enum(['1', '2', '3', '4', '5', '6']),
