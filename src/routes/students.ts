@@ -76,7 +76,6 @@ app.post('/', authMiddleware, async (c) => {
 
   const newStudent = await db.insert(students).values({
     ...validation.data,
-    userId: user.id,
     createdAt: new Date(),
   }).returning().get();
 

@@ -15,14 +15,14 @@ export const user = sqliteTable("user", {
 
 export const students = sqliteTable("students", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").notNull().unique().references(() => user.id),
+    userId: text("userId").unique().references(() => user.id),
     name: text("name").notNull(),
     whatsapp: text("whatsapp"),
     requiredAmount: real("requiredAmount").notNull(),
     status: text("status", { enum: ["paid", "pending"] }).default("pending").notNull(),
     faculty: text("faculty", { enum: ["medicine", "dentistry", "engineering", "other"] }).notNull(),
     semester: text("semester", { enum: ["1", "2", "3", "4", "5", "6"] }).notNull(),
-    enrollmentDate: integer("enrollmentDate", { mode: "timestamp" }).notNull().default(sql`CURRENT_TIMESTAMP`),
+    enrollmentDate: integer("enrollmentDate", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
 
