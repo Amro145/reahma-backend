@@ -76,7 +76,7 @@ app.route('/api/students', studentsRouter);
 app.route('/api/finance', financeRouter);
 app.route('/api/me', meRouter);
 app.route('/api/special-donations', specialDonationsRouter);
-app.route('/api/users', usersRouter);
+app.route('/api', usersRouter);
 
 app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA Backend API' }));
 
