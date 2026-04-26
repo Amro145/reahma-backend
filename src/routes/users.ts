@@ -14,6 +14,7 @@ const updateRoleSchema = z.object({
 });
 
 app.get('/users', authMiddleware, async (c) => {
+  // TODO GIVE ALL USERS WITHOUT currentUser
   const currentUser = c.get('user');
   if (currentUser.role !== 'admin' && currentUser.role !== 'management') {
     return c.json({ error: 'Forbidden' }, 403);
@@ -31,7 +32,7 @@ app.get('/users', authMiddleware, async (c) => {
       role: user.role,
       emailVerified: user.emailVerified,
       createdAt: user.createdAt,
-    }).from(user).orderBy(user.createdAt).limit(limit).offset(offset),
+    }).from(user).where(sql`${user.id} != ${currentUser.id}`).orderBy(user.createdAt).limit(limit).offset(offset),
     db.select({ count: sql`count(*)`.mapWith(Number) }).from(user).get()
   ]);
 
@@ -63,10 +64,7 @@ app.patch('/users/:id/role', authMiddleware, async (c) => {
     return c.json({ error: 'User not found' }, 404);
   }
 
-  // Management cannot make someone admin, only toggle between student and management
-  if (currentUser.role === 'management' && role === 'admin') {
-    return c.json({ error: 'Management cannot assign admin role' }, 403);
-  }
+ 
 
   // Cannot demote yourself if you're the only admin
   if (currentUser.id === userId && currentUser.role === 'admin' && role !== 'admin') {
