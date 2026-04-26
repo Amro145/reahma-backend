@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { getDb } from '../db/index';
 import { user } from '../db/schema';
 import { authMiddleware } from '../middlewares/auth-middleware';
@@ -20,16 +20,22 @@ app.get('/users', authMiddleware, async (c) => {
   }
 
   const db = getDb(c.env.rahma_db);
-  const users = await db.select({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    emailVerified: user.emailVerified,
-    createdAt: user.createdAt,
-  }).from(user).orderBy(user.createdAt).all();
+  const limit = Math.min(Number(c.req.query('limit')) || 20, 100);
+  const offset = Number(c.req.query('offset')) || 0;
 
-  return c.json({ users });
+  const [users, countResult] = await Promise.all([
+    db.select({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      emailVerified: user.emailVerified,
+      createdAt: user.createdAt,
+    }).from(user).orderBy(user.createdAt).limit(limit).offset(offset),
+    db.select({ count: sql`count(*)`.mapWith(Number) }).from(user).get()
+  ]);
+
+  return c.json({ users, total: countResult?.count || 0, limit, offset });
 });
 
 app.patch('/users/:id/role', authMiddleware, async (c) => {

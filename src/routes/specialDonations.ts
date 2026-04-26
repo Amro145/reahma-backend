@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../db/index';
 import { specialDonations, financeLogs, auditLogs } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth-middleware';
 import { Bindings, Variables } from '../types';
 
@@ -17,12 +17,19 @@ const donationSchema = z.object({
 
 app.get('/', authMiddleware, async (c) => {
     const db = getDb(c.env.rahma_db);
-    const data = await db.select()
-        .from(specialDonations)
-        .orderBy(desc(specialDonations.createdAt))
-        .all();
+    const limit = Math.min(Number(c.req.query('limit')) || 20, 100);
+    const offset = Number(c.req.query('offset')) || 0;
+
+    const [data, countResult] = await Promise.all([
+        db.select()
+            .from(specialDonations)
+            .orderBy(desc(specialDonations.createdAt))
+            .limit(limit)
+            .offset(offset),
+        db.select({ count: sql`count(*)`.mapWith(Number) }).from(specialDonations).get()
+    ]);
     
-    return c.json({ donations: data });
+    return c.json({ donations: data, total: countResult?.count || 0, limit, offset });
 });
 
 app.post('/', authMiddleware, async (c) => {

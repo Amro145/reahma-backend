@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../db/index';
 import { students, auditLogs, studentSubscriptions, financeLogs } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth-middleware';
 import { Bindings, Variables } from '../types';
 
@@ -28,14 +28,17 @@ app.get('/', authMiddleware, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
   
-  const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
+  const limit = Math.min(Number(c.req.query('limit')) || 20, 100);
   const offset = Number(c.req.query('offset')) || 0;
 
-  const data = await db.select().from(students)
-    .limit(limit)
-    .offset(offset);
+  const [data, countResult] = await Promise.all([
+    db.select().from(students)
+      .limit(limit)
+      .offset(offset),
+    db.select({ count: sql`count(*)`.mapWith(Number) }).from(students).get()
+  ]);
     
-  return c.json({ students: data });
+  return c.json({ students: data, total: countResult?.count || 0, limit, offset });
 });
 
 app.get('/:id', authMiddleware, async (c) => {

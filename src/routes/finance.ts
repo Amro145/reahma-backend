@@ -46,12 +46,19 @@ app.get('/summary', authMiddleware, async (c) => {
 
 app.get('/logs', authMiddleware, async (c) => {
   const db = getDb(c.env.rahma_db);
-  const data = await db.select()
-    .from(financeLogs)
-    .orderBy(desc(financeLogs.createdAt))
-    .limit(100);
+  const limit = Math.min(Number(c.req.query('limit')) || 20, 100);
+  const offset = Number(c.req.query('offset')) || 0;
+
+  const [data, countResult] = await Promise.all([
+    db.select()
+      .from(financeLogs)
+      .orderBy(desc(financeLogs.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db.select({ count: sql`count(*)`.mapWith(Number) }).from(financeLogs).get()
+  ]);
   
-  return c.json({ logs: data });
+  return c.json({ logs: data, total: countResult?.count || 0, limit, offset });
 });
 
 app.post('/logs', authMiddleware, async (c) => {
