@@ -9,6 +9,7 @@ import financeRouter from './routes/finance';
 import authRouter from './routes/auth';
 import meRouter from './routes/me';
 import specialDonationsRouter from './routes/specialDonations';
+import usersRouter from './routes/users';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -75,6 +76,7 @@ app.route('/api/students', studentsRouter);
 app.route('/api/finance', financeRouter);
 app.route('/api/me', meRouter);
 app.route('/api/special-donations', specialDonationsRouter);
+app.route('/api/users', usersRouter);
 
 app.get('/', (c) => c.json({ status: 'ok', message: 'RAHMA Backend API' }));
 

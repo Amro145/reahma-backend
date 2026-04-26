@@ -56,6 +56,7 @@ app.get('/logs', authMiddleware, async (c) => {
 
 app.post('/logs', authMiddleware, async (c) => {
   const user = c.get('user');
+  if (user.role !== 'admin' && user.role !== 'management') return c.json({ error: "Forbidden" }, 403);
   const db = getDb(c.env.rahma_db);
 
   const body = await c.req.json();

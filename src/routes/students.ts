@@ -56,7 +56,7 @@ app.get('/:id', authMiddleware, async (c) => {
 
 app.post('/', authMiddleware, async (c) => {
   const user = c.get('user');
-  if (user.role !== 'admin') return c.json({ error: "Forbidden: Only admins can create students" }, 403);
+  if (user.role !== 'admin' && user.role !== 'management') return c.json({ error: "Forbidden: Only admins and management can create students" }, 403);
   
   const db = getDb(c.env.rahma_db);
   

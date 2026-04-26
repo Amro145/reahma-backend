@@ -5,7 +5,7 @@ export type Bindings = {
   ALLOWED_ORIGINS: string;
 };
 
-export type UserRole = 'admin' | 'student';
+export type UserRole = 'admin' | 'management' | 'student';
 
 export type Variables = {
   user: {
