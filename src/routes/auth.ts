@@ -10,11 +10,26 @@ import { Bindings, Variables } from '../types';
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const signupSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6).max(100),
-  name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^\+?\d+$/).min(8).max(25).optional(),
-  requiredAmount: z.number().positive().max(10000000),
+  email: z.string({
+    required_error: "البريد الإلكتروني مطلوب",
+    invalid_type_error: "البريد الإلكتروني يجب أن يكون نصاً",
+  }).email("البريد الإلكتروني غير صالح"),
+  password: z.string({
+    required_error: "كلمة المرور مطلوبة",
+    invalid_type_error: "كلمة المرور يجب أن تكون نصاً",
+  }).min(6, "كلمة المرور يجب أن تكون 6 أحرف على الأقل").max(100, "كلمة المرور يجب أن لا تتجاوز 100 حرف"),
+  name: z.string({
+    required_error: "اسم المستخدم مطلوب",
+    invalid_type_error: "اسم المستخدم يجب أن يكون نصاً",
+  }).min(2, "اسم المستخدم يجب أن يكون حرفين على الأقل").max(100, "اسم المستخدم يجب أن لا يتجاوز 100 حرف"),
+  whatsapp: z.string({
+    required_error: "رقم الهاتف مطلوب",
+    invalid_type_error: "رقم الهاتف يجب أن يكون نصاً",
+  }).regex(/^\+?\d+$/, "رقم الهاتف غير صالح").min(8, "رقم الهاتف يجب أن يكون 8 أرقام على الأقل").max(25, "رقم الهاتف يجب أن لا يتجاوز 25 رقم").optional(),
+  requiredAmount: z.number({
+    required_error: "المبلغ المطلوب مطلوب",
+    invalid_type_error: "المبلغ المطلوب يجب أن يكون رقماً",
+  }).positive("المبلغ المطلوب يجب أن يكون أكبر من 0").max(10000000, "المبلغ المطلوب يجب أن لا يتجاوز 10000000"),
   faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
   semester: z.enum(['1', '2', '3', '4', '5', '6']),
 });

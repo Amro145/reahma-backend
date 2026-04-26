@@ -11,8 +11,8 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 const idParam = z.string().regex(/^\d+$/).transform(Number);
 
 const donationSchema = z.object({
-    donorName: z.string().min(1).max(100),
-    amount: z.number().positive(),
+    donorName: z.string().min(1, "اسم المتبرع مطلوب").max(100, "اسم المتبرع يجب ان لا يتجاوز 100 حرف"),
+    amount: z.number().positive("المبلغ يجب ان يكون اكبر من 0"),
 });
 
 app.get('/', authMiddleware, async (c) => {

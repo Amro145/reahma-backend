@@ -12,8 +12,8 @@ const logIdParam = z.string().regex(/^\d+$/).transform(Number);
 
 const logSchema = z.object({
   type: z.enum(['income', 'expense']),
-  amount: z.number().positive(),
-  category: z.string().min(1),
+  amount: z.number().positive("المبلغ يجب ان يكون اكبر من 0"),
+  category: z.string().min(1, "التصنيف مطلوب"),
   description: z.string().optional(),
 });
 

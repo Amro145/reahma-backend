@@ -9,9 +9,9 @@ import { Bindings, Variables } from '../types';
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const studentSchema = z.object({
-  name: z.string().min(2).max(100),
-  whatsapp: z.string().regex(/^\+?\d+$/).min(8).max(25).optional(),
-  requiredAmount: z.number().positive().max(10000000),
+  name: z.string().min(2, "اسم الطالب يجب ان يكون حرفين على الاقل").max(100, "اسم الطالب يجب ان لا يتجاوز 100 حرف"),
+  whatsapp: z.string().regex(/^\+?\d+$/).min(8, "رقم الهاتف يجب ان يكون 8 ارقام على الاقل").max(25, "رقم الهاتف يجب ان لا يتجاوز 25 رقم").optional(),
+  requiredAmount: z.number().positive("المبلغ المطلوب يجب ان يكون اكبر من 0").max(10000000, "المبلغ المطلوب يجب ان لا يتجاوز 10000000"),
   faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
   semester: z.enum(['1', '2', '3', '4', '5', '6']),
 });
