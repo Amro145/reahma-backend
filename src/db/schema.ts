@@ -54,3 +54,9 @@ export const financeLogs = sqliteTable("financeLogs", {
     description: text("description"),
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
 });
+export const specialDonations = sqliteTable("specialDonations", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    donorName: text("donorName").notNull(),
+    amount: real("amount").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+});
