@@ -1,17 +1,13 @@
 import { Hono } from 'hono';
-import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { eq, sql } from 'drizzle-orm';
 import { getDb } from '../db/index';
 import { user } from '../db/schema';
 import { authMiddleware } from '../middlewares/auth-middleware';
+import { updateRoleSchema } from '../schemas';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-const updateRoleSchema = z.object({
-  userId: z.string().uuid(),
-  role: z.enum(['admin', 'management', 'student']),
-});
 
 app.get('/users', authMiddleware, async (c) => {
   // TODO GIVE ALL USERS WITHOUT currentUser
@@ -39,7 +35,7 @@ app.get('/users', authMiddleware, async (c) => {
   return c.json({ users, total: countResult?.count || 0, limit, offset });
 });
 
-app.patch('/users/:id/role', authMiddleware, async (c) => {
+app.patch('/users/:id/role', authMiddleware, zValidator('json', updateRoleSchema), async (c) => {
   const currentUser = c.get('user');
   if (currentUser.role !== 'admin' && currentUser.role !== 'management') {
     return c.json({ error: 'Forbidden' }, 403);
@@ -50,13 +46,7 @@ app.patch('/users/:id/role', authMiddleware, async (c) => {
     return c.json({ error: 'User ID required' }, 400);
   }
 
-  const body = await c.req.json();
-  const validation = updateRoleSchema.safeParse({ ...body, userId });
-  if (!validation.success) {
-    return c.json({ error: validation.error.format() }, 400);
-  }
-
-  const { role } = validation.data;
+  const { role } = c.req.valid('json');
   const db = getDb(c.env.rahma_db);
 
   const targetUser = await db.select().from(user).where(eq(user.id, userId)).get();

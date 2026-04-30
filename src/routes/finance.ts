@@ -1,21 +1,16 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { getDb } from '../db/index';
 import { financeLogs, auditLogs, students } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth-middleware';
+import { financeLogSchema } from '../schemas';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const logIdParam = z.string().regex(/^\d+$/).transform(Number);
-
-const logSchema = z.object({
-  type: z.enum(['income', 'expense']),
-  amount: z.number().positive("المبلغ يجب ان يكون اكبر من 0"),
-  category: z.string().min(1, "التصنيف مطلوب"),
-  description: z.string().optional(),
-});
 
 app.get('/summary', authMiddleware, async (c) => {
   const db = getDb(c.env.rahma_db);
@@ -61,17 +56,14 @@ app.get('/logs', authMiddleware, async (c) => {
   return c.json({ logs: data, total: countResult?.count || 0, limit, offset });
 });
 
-app.post('/logs', authMiddleware, async (c) => {
+app.post('/logs', authMiddleware, zValidator('json', financeLogSchema), async (c) => {
   const user = c.get('user');
   if (user.role !== 'admin' && user.role !== 'management') return c.json({ error: "Forbidden" }, 403);
   const db = getDb(c.env.rahma_db);
-
-  const body = await c.req.json();
-  const validation = logSchema.safeParse(body);
-  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+  const data = c.req.valid('json');
 
   const newLog = await db.insert(financeLogs).values({
-    ...validation.data,
+    ...data,
     createdAt: new Date(),
   }).returning().get();
 
@@ -86,20 +78,17 @@ app.post('/logs', authMiddleware, async (c) => {
   return c.json({ log: newLog });
 });
 
-app.patch('/logs/:id', authMiddleware, async (c) => {
+app.patch('/logs/:id', authMiddleware, zValidator('json', financeLogSchema.partial()), async (c) => {
   const parsedId = logIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid log ID" }, 400);
   const logId = parsedId.data;
 
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
-
-  const body = await c.req.json();
-  const validation = logSchema.partial().safeParse(body);
-  if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+  const data = c.req.valid('json');
 
   const updated = await db.update(financeLogs)
-    .set(validation.data)
+    .set(data)
     .where(eq(financeLogs.id, logId))
     .returning().get();
 
@@ -108,7 +97,7 @@ app.patch('/logs/:id', authMiddleware, async (c) => {
   db.insert(auditLogs).values({
     userId: user.id,
     action: 'UPDATE_FINANCE_LOG',
-    details: JSON.stringify({ logId, changes: validation.data }),
+    details: JSON.stringify({ logId, changes: data }),
     createdAt: new Date(),
   }).run().catch(console.error);
 

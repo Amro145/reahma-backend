@@ -1,43 +1,14 @@
 import { Hono } from 'hono';
 import { sign } from 'hono/jwt';
-import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
 import { getDb } from '../db/index';
 import { user, students } from '../db/schema';
 import { hashPassword, verifyPassword } from '../lib/auth-utils';
+import { signupSchema, loginSchema } from '../schemas';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-const signupSchema = z.object({
-  email: z.string({
-    required_error: "البريد الإلكتروني مطلوب",
-    invalid_type_error: "البريد الإلكتروني يجب أن يكون نصاً",
-  }).email("البريد الإلكتروني غير صالح"),
-  password: z.string({
-    required_error: "كلمة المرور مطلوبة",
-    invalid_type_error: "كلمة المرور يجب أن تكون نصاً",
-  }).min(6, "كلمة المرور يجب أن تكون 6 أحرف على الأقل").max(100, "كلمة المرور يجب أن لا تتجاوز 100 حرف"),
-  name: z.string({
-    required_error: "اسم المستخدم مطلوب",
-    invalid_type_error: "اسم المستخدم يجب أن يكون نصاً",
-  }).min(2, "اسم المستخدم يجب أن يكون حرفين على الأقل").max(100, "اسم المستخدم يجب أن لا يتجاوز 100 حرف"),
-  whatsapp: z.string({
-    required_error: "رقم الهاتف مطلوب",
-    invalid_type_error: "رقم الهاتف يجب أن يكون نصاً",
-  }).regex(/^\+?\d+$/, "رقم الهاتف غير صالح").min(8, "رقم الهاتف يجب أن يكون 8 أرقام على الأقل").max(25, "رقم الهاتف يجب أن لا يتجاوز 25 رقم").optional(),
-  requiredAmount: z.number({
-    required_error: "المبلغ المطلوب مطلوب",
-    invalid_type_error: "المبلغ المطلوب يجب أن يكون رقماً",
-  }).positive("المبلغ المطلوب يجب أن يكون أكبر من 0").max(10000000, "المبلغ المطلوب يجب أن لا يتجاوز 10000000"),
-  faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
-  semester: z.enum(['1', '2', '3', '4', '5', '6']),
-});
-
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string(),
-});
 
 const generateToken = async (payload: { id: string; email: string; name: string; role: string }, secret: string) => {
   return await sign(
@@ -47,22 +18,9 @@ const generateToken = async (payload: { id: string; email: string; name: string;
   );
 };
 
-app.post('/signup', async (c) => {
+app.post('/signup', zValidator('json', signupSchema), async (c) => {
   const db = getDb(c.env.rahma_db);
-  
-  let body;
-  try {
-    body = await c.req.json();
-  } catch (err) {
-    return c.json({ error: "Invalid or missing JSON body" }, 400);
-  }
-
-  const validation = signupSchema.safeParse(body);
-  if (!validation.success) {
-    return c.json({ error: validation.error.format() }, 400);
-  }
-
-  const { email, password, name, whatsapp, requiredAmount, faculty, semester } = validation.data;
+  const { email, password, name, whatsapp, requiredAmount, faculty, semester } = c.req.valid('json');
 
   const existingUser = await db.select().from(user).where(eq(user.email, email)).get();
   if (existingUser) {
@@ -114,23 +72,10 @@ app.post('/signup', async (c) => {
   });
 });
 
-app.post('/login', async (c) => {
+app.post('/login', zValidator('json', loginSchema), async (c) => {
   try {
     const db = getDb(c.env.rahma_db);
-
-    let body;
-    try {
-      body = await c.req.json();
-    } catch (err) {
-      return c.json({ error: "Invalid or missing JSON body" }, 400);
-    }
-
-    const validation = loginSchema.safeParse(body);
-    if (!validation.success) {
-      return c.json({ error: validation.error.format() }, 400);
-    }
-
-    const { email, password } = validation.data;
+    const { email, password } = c.req.valid('json');
 
     const existingUser = await db.select().from(user).where(eq(user.email, email)).get();
     if (!existingUser) {

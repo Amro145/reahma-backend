@@ -1,26 +1,14 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { getDb } from '../db/index';
 import { students, auditLogs, studentSubscriptions, financeLogs } from '../db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth-middleware';
+import { studentSchema, paymentSchema } from '../schemas';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-const studentSchema = z.object({
-  name: z.string().min(2, "اسم الطالب يجب ان يكون حرفين على الاقل").max(100, "اسم الطالب يجب ان لا يتجاوز 100 حرف"),
-  whatsapp: z.string().regex(/^\+?\d+$/).min(8, "رقم الهاتف يجب ان يكون 8 ارقام على الاقل").max(25, "رقم الهاتف يجب ان لا يتجاوز 25 رقم").optional(),
-  requiredAmount: z.number().positive("المبلغ المطلوب يجب ان يكون اكبر من 0").max(10000000, "المبلغ المطلوب يجب ان لا يتجاوز 10000000"),
-  faculty: z.enum(['medicine', 'dentistry', 'engineering', 'other']),
-  semester: z.enum(['1', '2', '3', '4', '5', '6']),
-});
-
-const paymentSchema = z.object({
-  monthIndex: z.number().min(1).max(12),
-  academicYear: z.number().min(2024).max(2100),
-  amount: z.number().nonnegative(),
-});
 
 const studentIdParam = z.string().regex(/^\d+$/).transform(Number);
 
@@ -57,28 +45,15 @@ app.get('/:id', authMiddleware, async (c) => {
   return c.json({ student });
 });
 
-app.post('/', authMiddleware, async (c) => {
+app.post('/', authMiddleware, zValidator('json', studentSchema), async (c) => {
   const user = c.get('user');
   if (user.role !== 'admin' && user.role !== 'management') return c.json({ error: "Forbidden: Only admins and management can create students" }, 403);
-  
-  const db = getDb(c.env.rahma_db);
-  
-  let body;
-  try {
-    body = await c.req.json();
-  } catch (err) {
-    console.error("[Students] Failed to parse JSON body:", err);
-    return c.json({ error: "Invalid or missing JSON body" }, 400);
-  }
 
-  const validation = studentSchema.safeParse(body);
-  if (!validation.success) {
-    console.warn("[Students] Validation failed:", validation.error.format());
-    return c.json({ error: validation.error.format() }, 400);
-  }
+  const db = getDb(c.env.rahma_db);
+  const data = c.req.valid('json');
 
   const newStudent = await db.insert(students).values({
-    ...validation.data,
+    ...data,
     createdAt: new Date(),
   }).returning().get();
 
@@ -94,7 +69,7 @@ app.post('/', authMiddleware, async (c) => {
   return c.json({ student: newStudent });
 });
 
-app.patch('/:id', authMiddleware, async (c) => {
+app.patch('/:id', authMiddleware, zValidator('json', studentSchema.partial()), async (c) => {
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
   const studentId = parsedId.data;
@@ -102,8 +77,8 @@ app.patch('/:id', authMiddleware, async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.rahma_db);
 
-  const body = await c.req.json();
-  const validation = studentSchema.partial().safeParse(body);
+  const data = c.req.valid('json') as Partial<z.infer<typeof studentSchema>>;
+  const validation = studentSchema.partial().safeParse(data);
   if (!validation.success) return c.json({ error: validation.error.format() }, 400);
 
   const updated = await db.update(students)
@@ -205,7 +180,7 @@ app.get('/:id/payment-status', authMiddleware, async (c) => {
   });
 });
 
-app.patch('/:id/pay', authMiddleware, async (c) => {
+app.patch('/:id/pay', authMiddleware, zValidator('json', paymentSchema), async (c) => {
   const user = c.get('user');
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);
@@ -213,21 +188,7 @@ app.patch('/:id/pay', authMiddleware, async (c) => {
 
   const db = getDb(c.env.rahma_db);
   
-  let body;
-  try {
-    body = await c.req.json();
-  } catch (err) {
-    console.error("[Payment] Failed to parse JSON body:", err);
-    return c.json({ error: "Invalid or missing JSON body" }, 400);
-  }
-  
-  const validation = paymentSchema.safeParse(body);
-  if (!validation.success) {
-    console.warn("[Payment] Validation failed:", validation.error.format());
-    return c.json({ error: validation.error.format() }, 400);
-  }
-  
-  const { monthIndex, academicYear, amount } = validation.data;
+  const { monthIndex, academicYear, amount } = c.req.valid('json');
   console.log(`[Payment] Attempting payment for student ${studentId}, month ${monthIndex}, year ${academicYear}, amount ${amount}`);
 
   const student = await db.select().from(students)

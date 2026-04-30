@@ -1,19 +1,16 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import { getDb } from '../db/index';
 import { specialDonations, financeLogs, auditLogs } from '../db/schema';
 import { eq, desc, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth-middleware';
+import { donationSchema } from '../schemas';
 import { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const idParam = z.string().regex(/^\d+$/).transform(Number);
-
-const donationSchema = z.object({
-    donorName: z.string().min(1, "اسم المتبرع مطلوب").max(100, "اسم المتبرع يجب ان لا يتجاوز 100 حرف"),
-    amount: z.number().positive("المبلغ يجب ان يكون اكبر من 0"),
-});
 
 app.get('/', authMiddleware, async (c) => {
     const db = getDb(c.env.rahma_db);
@@ -32,24 +29,21 @@ app.get('/', authMiddleware, async (c) => {
     return c.json({ donations: data, total: countResult?.count || 0, limit, offset });
 });
 
-app.post('/', authMiddleware, async (c) => {
+app.post('/', authMiddleware, zValidator('json', donationSchema), async (c) => {
     const user = c.get('user');
     const db = getDb(c.env.rahma_db);
-
-    const body = await c.req.json();
-    const validation = donationSchema.safeParse(body);
-    if (!validation.success) return c.json({ error: validation.error.format() }, 400);
+    const data = c.req.valid('json');
 
     const newDonation = await db.insert(specialDonations).values({
-        ...validation.data,
+        ...data,
         createdAt: new Date(),
     }).returning().get();
 
     await db.insert(financeLogs).values({
         type: 'income',
-        amount: validation.data.amount,
+        amount: data.amount,
         category: 'تبرعات',
-        description: `تبرع خاص: ${validation.data.donorName}`,
+        description: `تبرع خاص: ${data.donorName}`,
         createdAt: new Date(),
     }).run();
 
