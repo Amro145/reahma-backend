@@ -102,7 +102,7 @@ app.patch('/:id', authMiddleware, zValidator('json', studentSchema.partial()), a
 
 app.delete('/:id', authMiddleware, async (c) => {
   const user = c.get('user');
-  if (user.role !== 'admin') return c.json({ error: "Forbidden" }, 403);
+  if (user.role !== 'admin' && user.role !== 'management') return c.json({ error: "Forbidden: Only management and admins can delete students" }, 403);
 
   const parsedId = studentIdParam.safeParse(c.req.param('id'));
   if (!parsedId.success) return c.json({ error: "Invalid ID" }, 400);

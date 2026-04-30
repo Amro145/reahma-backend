@@ -42,7 +42,6 @@ export const financeLogSchema = z.object({
 });
 
 export const updateRoleSchema = z.object({
-  userId: z.string().uuid("معرف المستخدم غير صالح"),
   role: z.enum(['admin', 'management', 'student'] as const),
 });
 
