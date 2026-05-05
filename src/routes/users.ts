@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { eq, sql } from 'drizzle-orm';
 import { getDb } from '../db/index';
-import { user } from '../db/schema';
+import { user, auditLogs, students } from '../db/schema';
 import { authMiddleware } from '../middlewares/auth-middleware';
 import { updateRoleSchema } from '../schemas';
 import { Bindings, Variables } from '../types';
@@ -75,7 +75,6 @@ app.patch('/users/:id/role', authMiddleware, zValidator('json', updateRoleSchema
 
   return c.json({ user: updated });
 });
-// TODO ADD DELETE USER ROUTE
 app.delete('/users/:id', authMiddleware, async (c) => {
   const currentUser = c.get('user');
   if (currentUser.role !== 'admin' && currentUser.role !== 'management') {
@@ -87,12 +86,20 @@ app.delete('/users/:id', authMiddleware, async (c) => {
     return c.json({ error: 'User ID required' }, 400);
   }
 
+  if (currentUser.id === userId) {
+    return c.json({ error: 'Cannot delete yourself' }, 400);
+  }
+
   const db = getDb(c.env.rahma_db);
 
   const targetUser = await db.select().from(user).where(eq(user.id, userId)).get();
   if (!targetUser) {
     return c.json({ error: 'User not found' }, 404);
   }
+
+  // Delete related records first (foreign key constraints)
+  await db.delete(auditLogs).where(eq(auditLogs.userId, userId));
+  await db.delete(students).where(eq(students.userId, userId));
 
   const deleted = await db.delete(user)
     .where(eq(user.id, userId))

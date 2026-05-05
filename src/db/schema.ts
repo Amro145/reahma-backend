@@ -15,7 +15,7 @@ export const user = sqliteTable("user", {
 
 export const students = sqliteTable("students", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").unique().references(() => user.id),
+    userId: text("userId").unique().references(() => user.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     whatsapp: text("whatsapp"),
     requiredAmount: real("requiredAmount").notNull(),
@@ -28,7 +28,7 @@ export const students = sqliteTable("students", {
 
 export const auditLogs = sqliteTable("auditLogs", {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    userId: text("userId").notNull().references(() => user.id),
+    userId: text("userId").notNull().references(() => user.id, { onDelete: "cascade" }),
     action: text("action").notNull(),
     details: text("details"),
     createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
