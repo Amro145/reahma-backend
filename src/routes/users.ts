@@ -75,5 +75,31 @@ app.patch('/users/:id/role', authMiddleware, zValidator('json', updateRoleSchema
 
   return c.json({ user: updated });
 });
+// TODO ADD DELETE USER ROUTE
+app.delete('/users/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user');
+  if (currentUser.role !== 'admin' && currentUser.role !== 'management') {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const userId = c.req.param('id');
+  if (!userId) {
+    return c.json({ error: 'User ID required' }, 400);
+  }
+
+  const db = getDb(c.env.rahma_db);
+
+  const targetUser = await db.select().from(user).where(eq(user.id, userId)).get();
+  if (!targetUser) {
+    return c.json({ error: 'User not found' }, 404);
+  }
+
+  const deleted = await db.delete(user)
+    .where(eq(user.id, userId))
+    .returning({ id: user.id })
+    .get();
+
+  return c.json({ user: deleted });
+});
 
 export default app;
